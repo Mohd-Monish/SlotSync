@@ -20,7 +20,7 @@ export default function AdminPage() {
   const fetchQueue = async () => {
     try {
       setStatus("Fetching data...");
-      const res = await fetch("https://myspotnow.onrender.com/queue");
+      const res = await fetch("https://myspotnow-api.onrender.com/queue");
       if (!res.ok) throw new Error(`Server Error: ${res.status}`);
       const data = await res.json();
       setQueue(data);
@@ -61,7 +61,7 @@ export default function AdminPage() {
     
     setStatus("Adding customer...");
     try {
-      const res = await fetch("https://myspotnow.onrender.com/add", {
+      const res = await fetch("https://myspotnow-api.onrender.com/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, phone_number: phone }),
@@ -81,7 +81,7 @@ export default function AdminPage() {
   const handleRemove = async (id: number) => {
     setStatus("Removing...");
     try {
-      await fetch(`https://myspotnow.onrender.com/remove/${id}`, { method: "DELETE" });
+      await fetch(`https://myspotnow-api.onrender.com/remove/${id}`, { method: "DELETE" });
       fetchQueue();
     } catch (err: any) {
       alert("Failed to remove");
