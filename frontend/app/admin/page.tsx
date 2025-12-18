@@ -173,6 +173,7 @@
 
 "use client";
 import { useState, useEffect } from 'react';
+import { Analytics } from "@vercel/analytics/next"
 
 export default function AdminPanel() {
   const [queueData, setQueueData] = useState<any>(null);

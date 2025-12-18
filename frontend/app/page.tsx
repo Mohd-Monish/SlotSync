@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from 'react';
+import { Analytics } from "@vercel/analytics/next"
 
 export default function Home() {
   const [queueData, setQueueData] = useState<any>(null);
