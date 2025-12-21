@@ -1,61 +1,46 @@
 "use client";
 import { useState, useEffect } from 'react';
 
-// --- TYPES ---
-type Customer = {
-  token: number;
-  name: string;
-  services: string[];
-  total_duration: number;
-  joined_at: string;
-};
-
-type QueueData = {
-  people_ahead: number;
-  total_wait_minutes: number;
-  queue: Customer[];
-};
-
-const SERVICE_OPTIONS = [
+// --- CONFIG ---
+const API_URL = "https://myspotnow-api.onrender.com"; // Your Render URL
+const SERVICES = [
   { name: "Haircut", time: 20 },
   { name: "Shave", time: 10 },
-  { name: "Massage", time: 15 },
-  { name: "Facial", time: 25 },
+  { name: "Head Massage", time: 15 },
+  { name: "Facial", time: 30 },
 ];
 
 export default function Home() {
-  const [data, setData] = useState<QueueData | null>(null);
+  // State
+  const [data, setData] = useState<any>(null);
   const [myToken, setMyToken] = useState<number | null>(null);
-
-  // Timer State
-  const [timeLeft, setTimeLeft] = useState<number>(0); // in seconds
-
+  const [timeLeft, setTimeLeft] = useState(0); // in seconds
+  
   // Form State
   const [showModal, setShowModal] = useState(false);
-  const [showAddModal, setShowAddModal] = useState(false); // For adding extra services
+  const [isAddingMore, setIsAddingMore] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [selectedServices, setSelectedServices] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const API_URL = 'https://myspotnow-api.onrender.com';
-
-  // --- INITIAL LOAD ---
+  // --- 1. INITIAL LOAD & TIMER ---
   useEffect(() => {
+    // Restore Session
     const savedToken = localStorage.getItem('slotSync_token');
     if (savedToken) setMyToken(parseInt(savedToken));
 
     fetchStatus();
+    
+    // Polling (Every 3s)
     const poller = setInterval(fetchStatus, 3000);
-
-    // LIVE TIMER COUNTDOWN (Updates every second)
+    
+    // Live Timer (Every 1s)
     const timer = setInterval(() => {
-      setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
+        setTimeLeft(prev => prev > 0 ? prev - 1 : 0);
     }, 1000);
 
-    return () => {
-      clearInterval(poller);
-      clearInterval(timer);
-    };
+    return () => { clearInterval(poller); clearInterval(timer); };
   }, []);
 
   const fetchStatus = async () => {
@@ -63,207 +48,181 @@ export default function Home() {
       const res = await fetch(`${API_URL}/queue/status`);
       const json = await res.json();
       setData(json);
-      // Sync the countdown timer with server time (converted to seconds)
-      // Only update if the difference is large to prevent "jumping"
-      if (Math.abs(json.total_wait_minutes * 60 - timeLeft) > 5) {
-        setTimeLeft(json.total_wait_minutes * 60);
-      }
-    } catch (err) {
-      console.error(err);
-    }
+      
+      // Sync Timer (Avoid jumping)
+      const serverSeconds = json.total_wait_minutes * 60;
+      if (Math.abs(serverSeconds - timeLeft) > 5) setTimeLeft(serverSeconds);
+    } catch (e) { console.error("API Error"); }
   };
 
-  // --- HANDLER: TOGGLE SERVICES ---
-  const toggleService = (service: string) => {
-    if (selectedServices.includes(service)) {
-      setSelectedServices(selectedServices.filter(s => s !== service));
-    } else {
-      setSelectedServices([...selectedServices, service]);
-    }
+  // --- 2. HANDLERS ---
+  const toggleService = (svc: string) => {
+    if (selected.includes(svc)) setSelected(selected.filter(s => s !== svc));
+    else setSelected([...selected, svc]);
   };
 
-  // --- HANDLER: JOIN QUEUE ---
-  // --- UPDATED JOIN HANDLER ---
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // 1. Basic Client-Side Validation
-    if (phone.length !== 10) {
-      alert("Please enter a valid 10-digit phone number (no spaces, no +91).");
-      return;
-    }
-    if (selectedServices.length === 0) {
-      alert("Please select at least one service.");
-      return;
-    }
-
+    if (phone.length !== 10) return alert("Phone must be exactly 10 digits");
+    if (selected.length === 0) return alert("Select at least one service");
+    
+    setLoading(true);
     try {
       const res = await fetch(`${API_URL}/queue/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name,
-          phone: phone,
-          services: selectedServices
-        }),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, phone, services: selected }),
       });
-
-      const result = await res.json();
-
+      const resData = await res.json();
+      
       if (res.ok) {
-        // SUCCESS
-        localStorage.setItem('slotSync_token', result.your_token.toString());
-        setMyToken(result.your_token);
+        localStorage.setItem('slotSync_token', resData.token.toString());
+        setMyToken(resData.token);
         setShowModal(false);
         fetchStatus();
       } else {
-        // ERROR: Show the exact message from the backend
-        console.error("Backend Error:", result);
-
-        // If it's a validation error (422), it usually comes as 'detail'
-        if (result.detail) {
-          // Check if it's a list of errors or a single string
-          const msg = Array.isArray(result.detail)
-            ? result.detail[0].msg
-            : result.detail;
-          alert(`Failed: ${msg}`);
-        } else {
-          alert(`Failed to join: ${result.message || "Unknown Error"}`);
-        }
+        alert("Error: " + (resData.detail?.[0]?.msg || "Failed to join"));
       }
-    } catch (error) {
-      console.error("Network Error:", error);
-      alert("Could not connect to the server. Is the Backend running?");
-    }
+    } catch (err) { alert("Server Error"); }
+    setLoading(false);
   };
 
-  // --- HANDLER: ADD EXTRA SERVICE ---
-  const handleAddService = async () => {
-    if (selectedServices.length === 0) return;
-
-    const res = await fetch(`${API_URL}/queue/add-service`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: myToken, new_services: selectedServices }),
+  const handleAddMore = async () => {
+    if (selected.length === 0) return;
+    await fetch(`${API_URL}/queue/add-service`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: myToken, new_services: selected }),
     });
-
-    if (res.ok) {
-      alert("Services Added! Queue time updated.");
-      setShowAddModal(false);
-      setSelectedServices([]); // Reset selection
-      fetchStatus();
-    }
+    setIsAddingMore(false);
+    setSelected([]);
+    fetchStatus();
+    alert("Services Added!");
   };
 
-  // --- FORMATTER: SECONDS TO MM:SS ---
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m}m ${s < 10 ? '0' : ''}${s}s`;
+  // --- 3. UI HELPERS ---
+  const formatTime = (s: number) => {
+    const mins = Math.floor(s / 60);
+    const secs = s % 60;
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
-  const amIInQueue = data?.queue.some(c => c.token === myToken);
+  const amIInQueue = data?.queue.some((c:any) => c.token === myToken);
 
   return (
-    <main className="min-h-screen bg-gray-50 p-6 flex flex-col items-center font-sans">
-
-      {/* STATUS CARD */}
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl overflow-hidden mb-6 border border-gray-100">
-        <div className="bg-blue-600 p-6 text-center text-white">
-          <h1 className="text-2xl font-black">SlotSync</h1>
-          <p className="text-blue-100 text-sm">Live Queue Status</p>
-        </div>
-
+    <main className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 p-6 flex flex-col items-center font-sans text-gray-800">
+      
+      {/* --- STATUS CARD --- */}
+      <div className="w-full max-w-md bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/50 mb-8 relative">
+        <div className="absolute top-0 w-full h-2 bg-gradient-to-r from-blue-500 to-purple-500"></div>
+        
         <div className="p-8 text-center">
-          <p className="text-xs font-bold uppercase text-gray-400 mb-2">Estimated Wait</p>
-          {/* LIVE COUNTDOWN DISPLAY */}
-          <div className="text-6xl font-black text-gray-800 tracking-tighter font-mono">
-            {formatTime(timeLeft)}
+          <h1 className="text-2xl font-black text-gray-900 tracking-tight mb-1">SlotSync</h1>
+          <p className="text-sm font-medium text-gray-500 uppercase tracking-widest mb-8">Live Queue</p>
+          
+          <div className="relative inline-block">
+             <span className="text-7xl font-mono font-bold text-gray-900 tracking-tighter">
+                {formatTime(timeLeft)}
+             </span>
+             <span className="absolute -bottom-4 left-0 w-full text-center text-xs text-gray-400 font-bold uppercase">Estimated Wait</span>
           </div>
 
-          {amIInQueue ? (
-            <div className="mt-6 animate-in zoom-in">
-              <p className="text-lg font-bold text-blue-600">You are Token #{myToken}</p>
-              <button
-                onClick={() => { setSelectedServices([]); setShowAddModal(true); }}
-                className="mt-4 bg-gray-100 text-gray-700 font-bold py-2 px-4 rounded-full text-sm hover:bg-gray-200"
+          <div className="mt-10 flex justify-center gap-2">
+             <span className="px-4 py-2 bg-blue-100 text-blue-700 rounded-full text-xs font-bold shadow-sm">
+                ● {data?.people_ahead || 0} Waiting
+             </span>
+             <span className="px-4 py-2 bg-green-100 text-green-700 rounded-full text-xs font-bold shadow-sm">
+                Open Now
+             </span>
+          </div>
+        </div>
+
+        {/* --- DYNAMIC ACTION AREA --- */}
+        <div className="bg-gray-50/50 p-6 border-t border-gray-100">
+           {amIInQueue ? (
+              <div className="text-center animate-in zoom-in duration-300">
+                 <p className="text-sm font-bold text-gray-400 uppercase">Your Token</p>
+                 <p className="text-5xl font-black text-blue-600 my-2">#{myToken}</p>
+                 <button 
+                    onClick={() => { setSelected([]); setIsAddingMore(true); }}
+                    className="mt-4 w-full bg-white border border-gray-200 text-gray-700 font-bold py-3 rounded-xl hover:bg-gray-50 shadow-sm"
+                 >
+                    + Add More Services
+                 </button>
+              </div>
+           ) : (
+              <button 
+                 onClick={() => setShowModal(true)}
+                 className="w-full bg-black text-white font-bold py-4 rounded-xl text-lg shadow-lg hover:scale-[1.02] transition-transform"
               >
-                + Add More Services
+                 Join Queue
               </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowModal(true)}
-              className="w-full mt-8 bg-black hover:bg-gray-800 text-white font-bold py-4 rounded-xl text-lg shadow-lg"
-            >
-              Join Queue
-            </button>
-          )}
+           )}
         </div>
       </div>
 
-      {/* MODAL: JOIN QUEUE */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm p-6">
-            <h2 className="font-bold text-lg mb-4">Join Queue</h2>
-            <form onSubmit={handleJoin} className="space-y-4">
-              <input
-                className="w-full p-3 border rounded-xl"
-                placeholder="Name"
-                value={name} onChange={e => setName(e.target.value)} required
-              />
-              <input
-                type="number"
-                className="w-full p-3 border rounded-xl"
-                placeholder="Phone (10 digits)"
-                value={phone} onChange={e => setPhone(e.target.value)} required
-              />
+      {/* --- QUEUE LIST --- */}
+      <div className="w-full max-w-md space-y-3">
+         <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-2">Current List</h3>
+         {data?.queue.map((p:any, i:number) => {
+            const isMe = p.token === myToken;
+            return (
+                <div key={p.token} className={`p-4 rounded-2xl flex items-center justify-between border shadow-sm transition-all
+                    ${isMe ? 'bg-white border-blue-500 ring-4 ring-blue-500/10 z-10 scale-[1.02]' : 'bg-white/60 border-gray-100'}
+                `}>
+                    <div className="flex items-center gap-4">
+                        <span className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm
+                            ${i===0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}
+                        `}>
+                            #{p.token}
+                        </span>
+                        <div>
+                            <p className="font-bold text-gray-800">{p.name} {isMe && '(You)'}</p>
+                            <p className="text-xs text-gray-500">{p.services.join(", ")} • {p.total_duration}m</p>
+                        </div>
+                    </div>
+                    {i===0 && <span className="text-[10px] font-bold bg-green-500 text-white px-2 py-1 rounded">NEXT</span>}
+                </div>
+            )
+         })}
+      </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                {SERVICE_OPTIONS.map(s => (
-                  <button
-                    type="button"
-                    key={s.name}
-                    onClick={() => toggleService(s.name)}
-                    className={`p-2 rounded-lg text-xs font-bold border transition
-                             ${selectedServices.includes(s.name) ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-500 border-gray-200'}
-                           `}
-                  >
-                    {s.name} ({s.time}m)
-                  </button>
-                ))}
+      {/* --- MODAL (JOIN & ADD) --- */}
+      {(showModal || isAddingMore) && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+           <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in duration-200">
+              <div className="p-6 bg-gray-50 border-b flex justify-between items-center">
+                 <h2 className="font-bold text-xl">{isAddingMore ? "Add Service" : "Book Spot"}</h2>
+                 <button onClick={() => { setShowModal(false); setIsAddingMore(false); }} className="text-gray-400 hover:text-black">✕</button>
               </div>
+              
+              <div className="p-6 space-y-4">
+                 {/* Only show Inputs if NOT adding more */}
+                 {!isAddingMore && (
+                     <>
+                        <input className="w-full p-4 bg-gray-50 border rounded-xl font-medium focus:ring-2 ring-blue-500 outline-none" 
+                            placeholder="Your Name" value={name} onChange={e=>setName(e.target.value)} />
+                        <input className="w-full p-4 bg-gray-50 border rounded-xl font-medium focus:ring-2 ring-blue-500 outline-none" 
+                            type="number" placeholder="Phone (10 digits)" value={phone} onChange={e=>setPhone(e.target.value)} />
+                     </>
+                 )}
 
-              <button className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl">Confirm</button>
-              <button type="button" onClick={() => setShowModal(false)} className="w-full text-gray-400 py-2">Cancel</button>
-            </form>
-          </div>
-        </div>
-      )}
+                 <div className="grid grid-cols-2 gap-2">
+                    {SERVICES.map(s => (
+                        <button key={s.name} type="button" onClick={() => toggleService(s.name)}
+                            className={`p-3 rounded-xl text-sm font-bold border transition-all ${selected.includes(s.name) ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}
+                        >
+                            {s.name} <span className="block text-[10px] opacity-60 font-normal">{s.time}m</span>
+                        </button>
+                    ))}
+                 </div>
 
-      {/* MODAL: ADD SERVICES */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm p-6">
-            <h2 className="font-bold text-lg mb-4">Add Extra Services</h2>
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              {SERVICE_OPTIONS.map(s => (
-                <button
-                  type="button"
-                  key={s.name}
-                  onClick={() => toggleService(s.name)}
-                  className={`p-2 rounded-lg text-xs font-bold border transition
-                             ${selectedServices.includes(s.name) ? 'bg-green-600 text-white border-green-600' : 'bg-gray-50 text-gray-500 border-gray-200'}
-                           `}
-                >
-                  + {s.name}
-                </button>
-              ))}
-            </div>
-            <button onClick={handleAddService} className="w-full bg-green-600 text-white font-bold py-3 rounded-xl">Update My Booking</button>
-            <button onClick={() => setShowAddModal(false)} className="w-full text-gray-400 py-2 mt-2">Cancel</button>
-          </div>
+                 <button onClick={isAddingMore ? handleAddMore : handleJoin} disabled={loading}
+                    className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-700 disabled:opacity-50">
+                    {loading ? "Processing..." : "Confirm"}
+                 </button>
+              </div>
+           </div>
         </div>
       )}
     </main>
