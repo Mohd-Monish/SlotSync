@@ -36,7 +36,7 @@
 
 # @app.get("/")
 # def read_root():
-#     return {"message": "MySpotNow Backend is Running!"}
+#     return {"message": "SlotSync Backend is Running!"}
 
 # # 1. Get Current Queue
 # @app.get("/queue")
@@ -111,7 +111,7 @@ current_token = 102
 
 @app.get("/")
 def home():
-    return {"message": "MySpotNow Backend is Live!"}
+    return {"message": "SlotSync Backend is Live!"}
 
 @app.get("/queue/status")
 def get_status():

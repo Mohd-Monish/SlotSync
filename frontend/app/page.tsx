@@ -79,7 +79,7 @@ export default function Home() {
       {/* Main Card */}
       <div className="w-full max-w-sm bg-white rounded-3xl shadow-2xl overflow-hidden border border-gray-200">
         <div className="bg-blue-600 p-6 text-center text-white relative">
-          <h1 className="text-3xl font-black tracking-tighter">MySpotNow</h1>
+          <h1 className="text-3xl font-black tracking-tighter">SlotSync</h1>
           <p className="text-blue-100 text-sm mt-1">{queueData.salon_name}</p>
         </div>
 
