@@ -19,6 +19,7 @@ export default function Admin() {
   const [selectedUser, setSelectedUser] = useState<any>(null); // VIEW PROFILE
   const [editingUser, setEditingUser] = useState<any>(null);   // EDIT SERVICES
   const [editServices, setEditServices] = useState<string[]>([]);
+  const [loadingAction, setLoadingAction] = useState<number | null>(null); // For loading spinners
 
   // --- SYNC ---
   useEffect(() => {
@@ -32,7 +33,12 @@ export default function Admin() {
     try {
         const res = await fetch(`${API_URL}/queue/status`);
         const json = await res.json();
-        setData(json);
+        // Only update data if something changed (prevents animation jitter)
+        setData((prev: any) => {
+            if (JSON.stringify(prev?.queue) !== JSON.stringify(json.queue)) return json;
+            return prev;
+        });
+        
         if (Math.abs(json.seconds_left - timeLeft) > 2) setTimeLeft(json.seconds_left);
     } catch (e) { console.error("API Error"); }
   };
@@ -48,10 +54,26 @@ export default function Admin() {
 
   const moveUser = async (token: number, direction: "up" | "down", e: any) => {
       e.stopPropagation();
+      setLoadingAction(token); // Show spinner
+      
+      // OPTIMISTIC UPDATE (Fake it instantly for better UI)
+      const newQueue = [...data.queue];
+      const idx = newQueue.findIndex(c => c.token === token);
+      if (idx !== -1) {
+          if (direction === "up" && idx > 0) {
+              [newQueue[idx], newQueue[idx-1]] = [newQueue[idx-1], newQueue[idx]];
+          } else if (direction === "down" && idx < newQueue.length - 1) {
+              [newQueue[idx], newQueue[idx+1]] = [newQueue[idx+1], newQueue[idx]];
+          }
+          setData({ ...data, queue: newQueue });
+      }
+
       await fetch(`${API_URL}/queue/move`, { 
           method: "POST", headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ token, direction }) 
       });
+      
+      setTimeout(() => setLoadingAction(null), 500); // Small delay for smoothness
       refresh();
   };
 
@@ -77,7 +99,7 @@ export default function Admin() {
 
   // --- EDIT LOGIC ---
   const openEdit = (user: any, e: any) => {
-      e.stopPropagation(); // Prevents opening the profile popup
+      e.stopPropagation();
       setEditingUser(user);
       setEditServices(user.services);
   };
@@ -94,7 +116,7 @@ export default function Admin() {
           body: JSON.stringify({ token: editingUser.token, services: editServices })
       });
       setEditingUser(null);
-      refresh(); // This updates the timer for everyone!
+      refresh();
   };
 
   const formatTime = (s: number) => {
@@ -131,13 +153,15 @@ export default function Admin() {
          </div>
       </div>
 
-      {/* LIST */}
-      <div className="space-y-3">
+      {/* LIST (Now with Animations) */}
+      <div className="space-y-3 relative">
          {data?.queue.map((p: any, index: number) => (
              <div key={p.token} 
-                onClick={() => setSelectedUser(p)} // CLICK CARD = VIEW PROFILE
-                className={`flex flex-col md:flex-row items-center justify-between p-4 rounded-xl border cursor-pointer transition-all hover:bg-neutral-800
-                    ${index===0 ? 'bg-blue-900/20 border-blue-500/50' : 'bg-neutral-900 border-white/5'}
+                onClick={() => setSelectedUser(p)} 
+                className={`flex flex-col md:flex-row items-center justify-between p-4 rounded-xl border cursor-pointer 
+                    transition-all duration-500 ease-in-out transform hover:scale-[1.01] hover:bg-neutral-800
+                    ${index===0 ? 'bg-blue-900/20 border-blue-500/50 translate-x-2' : 'bg-neutral-900 border-white/5'}
+                    ${loadingAction === p.token ? 'opacity-50 scale-95' : 'opacity-100'}
                 `}
              >
                 <div className="flex items-center gap-4 w-full md:w-auto mb-4 md:mb-0">
@@ -153,22 +177,31 @@ export default function Admin() {
 
                 {/* ACTIONS */}
                 <div className="flex items-center gap-2">
-                    <a href={`tel:${p.phone}`} onClick={(e)=>e.stopPropagation()} className="p-2 bg-green-500/10 text-green-500 hover:bg-green-500 hover:text-white rounded-lg transition">📞</a>
-                    <button onClick={(e) => openEdit(p, e)} className="p-2 bg-neutral-800 text-gray-300 hover:bg-white hover:text-black rounded-lg transition">✎</button>
-                    <button onClick={(e) => moveUser(p.token, "up", e)} disabled={index === 0} className="p-2 bg-neutral-800 text-gray-300 hover:bg-blue-600 hover:text-white rounded-lg disabled:opacity-30 transition">⬆</button>
-                    <button onClick={(e) => moveUser(p.token, "down", e)} disabled={index === data.queue.length - 1} className="p-2 bg-neutral-800 text-gray-300 hover:bg-blue-600 hover:text-white rounded-lg disabled:opacity-30 transition">⬇</button>
+                    <a href={`tel:${p.phone}`} onClick={(e)=>e.stopPropagation()} className="p-2 bg-green-500/10 text-green-500 hover:bg-green-500 hover:text-white rounded-lg transition transform hover:-translate-y-1">📞</a>
+                    <button onClick={(e) => openEdit(p, e)} className="p-2 bg-neutral-800 text-gray-300 hover:bg-white hover:text-black rounded-lg transition transform hover:-translate-y-1">✎</button>
+                    
+                    {/* ANIMATED MOVE BUTTONS */}
+                    <button onClick={(e) => moveUser(p.token, "up", e)} disabled={index === 0} 
+                        className="p-2 bg-neutral-800 text-gray-300 hover:bg-blue-600 hover:text-white rounded-lg disabled:opacity-30 transition active:scale-90">
+                        ⬆
+                    </button>
+                    <button onClick={(e) => moveUser(p.token, "down", e)} disabled={index === data.queue.length - 1} 
+                        className="p-2 bg-neutral-800 text-gray-300 hover:bg-blue-600 hover:text-white rounded-lg disabled:opacity-30 transition active:scale-90">
+                        ⬇
+                    </button>
+
                     {index !== 0 && (
-                        <button onClick={(e) => serveNow(p.token, e)} className="p-2 bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500 hover:text-black rounded-lg transition">⚡</button>
+                        <button onClick={(e) => serveNow(p.token, e)} className="p-2 bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500 hover:text-black rounded-lg transition transform hover:rotate-12">⚡</button>
                     )}
-                    <button onClick={(e) => deleteUser(p.token, e)} className="p-2 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition">✕</button>
+                    <button onClick={(e) => deleteUser(p.token, e)} className="p-2 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition hover:scale-110">✕</button>
                 </div>
              </div>
          ))}
       </div>
       
-      {data?.queue.length === 0 && <div className="p-10 text-center text-gray-600 border-2 border-dashed border-neutral-800 rounded-xl mt-4">Queue is empty</div>}
+      {data?.queue.length === 0 && <div className="p-10 text-center text-gray-600 border-2 border-dashed border-neutral-800 rounded-xl mt-4 animate-pulse">Queue is empty</div>}
 
-      {/* --- PROFILE POPUP (VIEW ONLY) --- */}
+      {/* --- PROFILE POPUP --- */}
       {selectedUser && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-neutral-900 border border-white/10 p-8 rounded-3xl w-full max-w-md relative animate-in fade-in zoom-in duration-200 shadow-2xl">
@@ -187,7 +220,7 @@ export default function Admin() {
           </div>
       )}
 
-      {/* --- EDIT MODAL (CHANGE SERVICES) --- */}
+      {/* --- EDIT MODAL --- */}
       {editingUser && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-neutral-900 border border-white/10 p-6 rounded-2xl w-full max-w-sm animate-in zoom-in duration-200">
@@ -196,8 +229,8 @@ export default function Admin() {
                       {ALL_SERVICES.map(svc => (
                           <div key={svc.name} 
                             onClick={() => toggleEditService(svc.name)}
-                            className={`p-3 rounded-lg border cursor-pointer flex justify-between items-center transition
-                                ${editServices.includes(svc.name) ? 'bg-blue-600 border-blue-500 text-white' : 'bg-neutral-800 border-white/5 text-gray-400'}
+                            className={`p-3 rounded-lg border cursor-pointer flex justify-between items-center transition duration-300
+                                ${editServices.includes(svc.name) ? 'bg-blue-600 border-blue-500 text-white scale-[1.02]' : 'bg-neutral-800 border-white/5 text-gray-400 hover:bg-neutral-700'}
                             `}
                           >
                               <span>{svc.name}</span>
@@ -206,7 +239,7 @@ export default function Admin() {
                       ))}
                   </div>
                   <div className="flex gap-2">
-                      <button onClick={saveEdit} className="w-full py-3 bg-green-500 text-black font-bold rounded-xl hover:bg-green-400">Save & Update Timer</button>
+                      <button onClick={saveEdit} className="w-full py-3 bg-green-500 text-black font-bold rounded-xl hover:bg-green-400 transform transition active:scale-95">Save Changes</button>
                       <button onClick={() => setEditingUser(null)} className="w-1/3 py-3 bg-neutral-800 text-white font-bold rounded-xl hover:bg-neutral-700">Cancel</button>
                   </div>
               </div>
