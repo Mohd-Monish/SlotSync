@@ -42,14 +42,13 @@ class AddServiceRequest(BaseModel):
     token: int
     new_services: List[str]
 
-# NEW: Master Control Models
 class MoveRequest(BaseModel):
     token: int
-    direction: str # "up" or "down"
+    direction: str 
 
 class EditRequest(BaseModel):
     token: int
-    services: List[str] # The NEW full list of services
+    services: List[str]
 
 class ActionRequest(BaseModel):
     token: int
@@ -60,8 +59,18 @@ def calculate_status():
     elapsed = 0
     if queue_db and current_service_start:
         elapsed = (datetime.now() - current_service_start).total_seconds()
+    
+    # Calculate real remaining seconds
     seconds_left = max(0, (total_minutes * 60) - elapsed)
-    return {"count": len(queue_db), "seconds_left": int(seconds_left), "stats": {"served": len(history_db), "minutes": sum(c['total_duration'] for c in history_db)}}
+    
+    return {
+        "count": len(queue_db), 
+        "seconds_left": int(seconds_left), 
+        "stats": {
+            "served": len(history_db), 
+            "minutes": sum(c['total_duration'] for c in history_db)
+        }
+    }
 
 # --- ENDPOINTS ---
 @app.get("/")
@@ -70,7 +79,13 @@ def home(): return {"status": "Online"}
 @app.get("/queue/status")
 def get_status():
     st = calculate_status()
-    return {"shop_status": "Open", "people_ahead": st["count"], "seconds_left": st["seconds_left"], "queue": queue_db, "daily_stats": st["stats"]}
+    return {
+        "shop_status": "Open", 
+        "people_ahead": st["count"], 
+        "seconds_left": st["seconds_left"], 
+        "queue": queue_db, 
+        "daily_stats": st["stats"]
+    }
 
 @app.post("/queue/join")
 def join_queue(req: JoinRequest):
@@ -115,27 +130,24 @@ def reset():
     current_service_start = None
     return {"message": "Reset"}
 
-# --- NEW MASTER ENDPOINTS ---
-
+# --- MASTER ENDPOINTS ---
 @app.post("/queue/move")
 def move_customer(req: MoveRequest):
-    # Find index
     idx = next((i for i, c in enumerate(queue_db) if c['token'] == req.token), -1)
     if idx == -1: return {"message": "Not found"}
-    
-    # Swap Logic
     if req.direction == "up" and idx > 0:
         queue_db[idx], queue_db[idx-1] = queue_db[idx-1], queue_db[idx]
     elif req.direction == "down" and idx < len(queue_db) - 1:
         queue_db[idx], queue_db[idx+1] = queue_db[idx+1], queue_db[idx]
-        
     return {"message": "Moved"}
 
 @app.post("/queue/edit")
 def edit_customer(req: EditRequest):
     for c in queue_db:
         if c['token'] == req.token:
+            # 1. Update Services
             c['services'] = req.services
+            # 2. Recalculate Time (Crucial for Global Timer Sync)
             c['total_duration'] = sum(MENU.get(s, 0) for s in req.services)
             return {"message": "Edited"}
     return {"message": "Not found"}
@@ -148,7 +160,6 @@ def delete_customer(req: ActionRequest):
 
 @app.post("/queue/serve-now")
 def serve_now(req: ActionRequest):
-    # Move specific token to index 0 (Front of line)
     idx = next((i for i, c in enumerate(queue_db) if c['token'] == req.token), -1)
     if idx > 0:
         item = queue_db.pop(idx)
