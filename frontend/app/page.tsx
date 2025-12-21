@@ -17,8 +17,9 @@ export default function Home() {
   const [myToken, setMyToken] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState(0); 
   
-  // Ref to track the last server time to prevent glitches
-  const lastServerTime = useRef<number | null>(null);
+  // REFS (For Smart Timer Logic)
+  // We store the list of token IDs to detect if the queue actually changed
+  const lastQueueTokens = useRef<string>("");
 
   // Form State
   const [showModal, setShowModal] = useState(false);
@@ -35,8 +36,10 @@ export default function Home() {
 
     fetchStatus();
     const poller = setInterval(fetchStatus, 3000);
+    
+    // Smooth Countdown (Decrements every second)
     const timer = setInterval(() => {
-        setTimeLeft(prev => prev > 0 ? prev - 1 : 0);
+        setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
     }, 1000);
 
     return () => { clearInterval(poller); clearInterval(timer); };
@@ -48,15 +51,14 @@ export default function Home() {
       const json = await res.json();
       setData(json);
       
-      const serverTotalMinutes = json.total_wait_minutes;
+      // --- SMART TIMER FIX ---
+      // Create a "fingerprint" of the current queue (e.g., "101,102,103")
+      const currentTokens = json.queue.map((q: any) => q.token).join(",");
 
-      // --- THE FIX ---
-      // Only reset the timer if the Server Time has actually CHANGED 
-      // (e.g., someone joined or left). 
-      // Otherwise, trust our local countdown.
-      if (lastServerTime.current !== serverTotalMinutes) {
-          setTimeLeft(serverTotalMinutes * 60);
-          lastServerTime.current = serverTotalMinutes;
+      // Only reset the timer if the queue has CHANGED (someone joined/left)
+      if (lastQueueTokens.current !== currentTokens) {
+          setTimeLeft(json.total_wait_minutes * 60);
+          lastQueueTokens.current = currentTokens; // Update our record
       }
       
     } catch (e) { console.error("API Error"); }
@@ -76,7 +78,7 @@ export default function Home() {
   };
 
   const handleJoin = async (e: React.FormEvent) => {
-    e.preventDefault();
+    e.preventDefault(); // Stop form reload
     if (phone.length !== 10) return alert("Phone must be exactly 10 digits");
     if (selected.length === 0) return alert("Select at least one service");
     
@@ -101,17 +103,25 @@ export default function Home() {
     setLoading(false);
   };
 
-  const handleAddMore = async () => {
+  // --- FIXED ADD SERVICE HANDLER ---
+  const handleAddMore = async (e: React.FormEvent) => {
+    e.preventDefault(); // <--- CRITICAL FIX: Stops the page/modal reload
     if (selected.length === 0) return;
+    
+    setLoading(true);
     await fetch(`${API_URL}/queue/add-service`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: myToken, new_services: selected }),
     });
+    
+    // Close modal cleanly without alert
     setIsAddingMore(false);
     setSelected([]);
-    fetchStatus();
-    alert("Services Added!");
+    setLoading(false);
+    
+    // Force a data refresh to update time immediately
+    fetchStatus(); 
   };
 
   // --- 3. UI HELPERS ---
