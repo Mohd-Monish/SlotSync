@@ -10,9 +10,14 @@ from passlib.context import CryptContext
 app = FastAPI()
 
 # --- CONFIG ---
+# --- CONFIG ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",          # Local testing
+        "https://test.slotsync.in",       # Your specific Frontend
+        "https://myspotnow-api.onrender.com" # Self
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
