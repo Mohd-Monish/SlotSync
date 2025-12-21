@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from datetime import datetime
 from typing import List, Optional
 
@@ -15,11 +15,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- SERVICE MENU & TIMES (Minutes) ---
+SERVICE_MENU = {
+    "Haircut": 20,
+    "Shave": 10,
+    "Massage": 15,
+    "Hair Color": 30,
+    "Facial": 25
+}
+
 # --- MODELS ---
-class Customer(BaseModel):
+class JoinRequest(BaseModel):
     name: str
     phone: str
-    service_type: str = "Haircut" # Default
+    services: List[str]  # e.g., ["Haircut", "Shave"]
+
+    # VALIDATOR: Force 10-digit phone number
+    @validator('phone')
+    def validate_phone(cls, v):
+        if not v.isdigit() or len(v) != 10:
+            raise ValueError('Phone number must be exactly 10 digits')
+        return v
+
+class AddServiceRequest(BaseModel):
+    token: int
+    new_services: List[str]
 
 class LeaveRequest(BaseModel):
     token: int
@@ -29,36 +49,43 @@ queue_db = []
 history_db = []
 current_token = 100
 
+# --- HELPER: Calculate Total Queue Time ---
+def calculate_eta():
+    total_minutes = 0
+    for customer in queue_db:
+        total_minutes += customer['total_duration']
+    return total_minutes
+
 # --- ENDPOINTS ---
 
 @app.get("/")
 def home():
-    return {"message": "SlotSync Backend Online"}
+    return {"message": "SlotSync v2 Online"}
 
 @app.get("/queue/status")
 def get_status():
-    waiting_count = len(queue_db)
-    # Estimate: Haircut = 20m, Shave = 10m. For simplicity, avg 15m.
-    eta_minutes = waiting_count * 15
-    
     return {
         "shop_status": "Open",
-        "people_ahead": waiting_count,
-        "estimated_wait_minutes": eta_minutes,
+        "people_ahead": len(queue_db),
+        "total_wait_minutes": calculate_eta(),
         "queue": queue_db,
-        "history": history_db[-5:] # Send last 5 finished
+        "history": history_db[-5:]
     }
 
 @app.post("/queue/join")
-def join_queue(customer: Customer):
+def join_queue(req: JoinRequest):
     global current_token
     current_token += 1
     
+    # Calculate how long this customer will take
+    duration = sum([SERVICE_MENU.get(s, 0) for s in req.services])
+    
     new_entry = {
         "token": current_token,
-        "name": customer.name,
-        "phone": customer.phone,
-        "service": customer.service_type,
+        "name": req.name,
+        "phone": req.phone,
+        "services": req.services,     # List of services
+        "total_duration": duration,   # Total time for this person
         "status": "waiting",
         "joined_at": datetime.now().strftime("%I:%M %p")
     }
@@ -68,23 +95,35 @@ def join_queue(customer: Customer):
     return {
         "message": "Joined successfully",
         "your_token": current_token,
-        "your_name": customer.name # Return this so frontend can save it
+        "your_name": req.name,
+        "eta": calculate_eta()
     }
 
-# --- NEW: Allow User to Leave Queue ---
+@app.post("/queue/add-service")
+def add_service(req: AddServiceRequest):
+    # Find customer
+    for customer in queue_db:
+        if customer['token'] == req.token:
+            # Add new services
+            customer['services'].extend(req.new_services)
+            # Recalculate their duration
+            added_time = sum([SERVICE_MENU.get(s, 0) for s in req.new_services])
+            customer['total_duration'] += added_time
+            
+            return {
+                "message": "Services updated", 
+                "new_total_time": customer['total_duration'],
+                "global_eta": calculate_eta()
+            }
+            
+    raise HTTPException(status_code=404, detail="Token not found")
+
 @app.post("/queue/leave")
 def leave_queue(req: LeaveRequest):
     global queue_db
-    # Find and remove the person with this token
-    original_count = len(queue_db)
     queue_db = [c for c in queue_db if c['token'] != req.token]
-    
-    if len(queue_db) < original_count:
-        return {"message": "You have left the queue."}
-    else:
-        return {"message": "Token not found (maybe already removed?)"}
+    return {"message": "Left queue"}
 
-# --- VENDOR: Call Next ---
 @app.post("/queue/next")
 def next_customer():
     if len(queue_db) > 0:

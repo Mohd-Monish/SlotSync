@@ -1,184 +1,110 @@
 "use client";
 import { useState, useEffect } from 'react';
 
-// Define what a "Customer" looks like so React understands the data
+// --- TYPES ---
 type Customer = {
   token: number;
   name: string;
   phone: string;
+  services: string[];
+  total_duration: number;
   joined_at: string;
 };
 
 export default function AdminPanel() {
-  // --- STATE VARIABLES ---
-  // Stores the list of people waiting
   const [queue, setQueue] = useState<Customer[]>([]);
-  // Stores the history of served customers
-  const [history, setHistory] = useState<Customer[]>([]);
-  // Stores general stats (wait time, count)
-  const [stats, setStats] = useState({ people_ahead: 0, wait_time: 0 });
-  // Loading state (true = showing spinner, false = showing data)
   const [loading, setLoading] = useState(true);
+  
+  // POPUP STATE
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
-  // --- API FUNCTIONS ---
-
-  // 1. Fetch the latest data from Python backend
   const refreshQueue = async () => {
-    try {
       const res = await fetch('https://myspotnow-api.onrender.com/queue/status');
       const data = await res.json();
-      
-      // Update our state variables with new data
-      setQueue(data.queue || []);
-      setHistory(data.history || []);
-      setStats({
-        people_ahead: data.people_ahead,
-        wait_time: data.estimated_wait_minutes
-      });
-      setLoading(false); // Data loaded, stop spinner
-    } catch (err) {
-      console.error("Connection Error:", err);
-      // Optional: Alert user if connection fails
-    }
+      setQueue(data.queue);
+      setLoading(false);
   };
 
-  // 2. Tell backend to move to the next customer
-  const handleNext = async () => {
-    // Optimistic Update: Remove first person visually immediately (feels faster)
-    const personToServe = queue[0];
-    if (!personToServe) return;
-
-    // Send command to backend
-    await fetch('https://myspotnow-api.onrender.com/queue/next', { method: 'POST' });
-    
-    // Refresh data to ensure we are in sync with server
-    refreshQueue(); 
-  };
-
-  // --- AUTO-REFRESH LOGIC ---
   useEffect(() => {
-    refreshQueue(); // Run once when page loads
-    
-    // Then run every 5 seconds automatically
+    refreshQueue();
     const interval = setInterval(refreshQueue, 5000);
-    
-    // Cleanup when leaving page
     return () => clearInterval(interval);
   }, []);
 
-  // --- RENDER: LOADING SCREEN ---
-  if (loading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-gray-900 text-white">
-        <div className="text-xl font-bold animate-pulse">Connecting to Shop...</div>
-      </div>
-    );
-  }
+  const handleNext = async () => {
+      await fetch('https://myspotnow-api.onrender.com/queue/next', { method: 'POST' });
+      refreshQueue();
+  };
 
-  // --- RENDER: MAIN DASHBOARD ---
   return (
-    <div className="min-h-screen bg-gray-900 text-white font-sans p-6 md:p-10">
-      
-      {/* 1. HEADER SECTION */}
-      <div className="flex justify-between items-end border-b border-gray-700 pb-6 mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-blue-400">SlotSync</h1>
-          <p className="text-gray-400 text-sm mt-1">Vendor Dashboard</p>
-        </div>
-        <div className="text-right">
-           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-900 text-green-300">
-             ● System Online
-           </span>
-        </div>
+    <div className="min-h-screen bg-gray-900 text-white p-6 md:p-10 font-sans">
+      <div className="flex justify-between items-end mb-8 border-b border-gray-700 pb-4">
+          <h1 className="text-3xl font-bold text-blue-400">Vendor Dashboard</h1>
+          <button onClick={handleNext} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold">
+              Call Next Customer
+          </button>
       </div>
 
-      {/* 2. KEY STATS CARDS */}
-      <div className="grid grid-cols-2 gap-4 mb-8">
-        {/* Card 1: Queue Count */}
-        <div className="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700">
-          <p className="text-gray-400 text-xs font-bold uppercase tracking-wider">In Queue</p>
-          <p className="text-5xl font-bold mt-2">{stats.people_ahead}</p>
-        </div>
-        
-        {/* Card 2: Wait Time */}
-        <div className="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700">
-          <p className="text-gray-400 text-xs font-bold uppercase tracking-wider">Est. Wait</p>
-          <div className="flex items-baseline mt-2">
-            <p className="text-5xl font-bold">{stats.wait_time}</p>
-            <span className="text-xl text-gray-500 ml-1">mins</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 3. THE "NEXT CUSTOMER" ACTION AREA */}
-      <div className="mb-10">
-        {queue.length > 0 ? (
-            // If people are waiting, show the button
-            <button 
-                onClick={handleNext}
-                className="w-full py-6 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-bold text-2xl rounded-2xl shadow-xl transform transition hover:scale-[1.02] active:scale-95 flex flex-col items-center justify-center"
-            >
-                <span>Call #{queue[0].token}</span>
-                <span className="text-sm font-normal opacity-80 mt-1">Next: {queue[0].name}</span>
-            </button>
-        ) : (
-            // If queue is empty, disable button
-            <div className="w-full py-6 bg-gray-800 text-gray-500 font-bold text-xl rounded-2xl border-2 border-dashed border-gray-700 text-center">
-                The Queue is Empty ☕
-            </div>
-        )}
-      </div>
-
-      {/* 4. LIST: UPCOMING CUSTOMERS */}
-      <div className="grid md:grid-cols-2 gap-8">
-        
-        {/* LEFT COLUMN: Waiting List */}
-        <div>
-          <h3 className="text-gray-400 text-xs font-bold uppercase mb-4 tracking-wider">Up Next</h3>
-          <div className="space-y-3">
-            {queue.map((person, index) => (
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {queue.map((person, index) => (
               <div 
-                key={person.token} 
-                className={`flex items-center justify-between p-4 rounded-xl border-l-4 shadow-sm ${
-                    index === 0 ? "bg-gray-800 border-blue-500" : "bg-gray-800/50 border-gray-600"
-                }`}
+                  key={person.token}
+                  onClick={() => setSelectedCustomer(person)} // CLICK TO OPEN POPUP
+                  className={`p-4 rounded-xl cursor-pointer transition hover:scale-[1.02] ${index === 0 ? 'bg-blue-900 border-2 border-blue-500' : 'bg-gray-800 border border-gray-700'}`}
               >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-blue-300 font-bold">#{person.token}</span>
-                    <span className="font-bold text-lg">{person.name}</span>
+                  <div className="flex justify-between items-start">
+                      <div>
+                          <span className="text-2xl font-bold">#{person.token}</span>
+                          <h3 className="text-lg font-bold mt-1">{person.name}</h3>
+                          <p className="text-xs text-gray-400 mt-1">{person.services.length} Services • {person.total_duration} min</p>
+                      </div>
+                      {index === 0 && <span className="bg-blue-500 text-xs px-2 py-1 rounded font-bold">CURRENT</span>}
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">Joined at {person.joined_at}</p>
-                </div>
-                {index === 0 && (
-                    <span className="bg-blue-500/20 text-blue-300 text-[10px] font-bold px-2 py-1 rounded uppercase">
-                        Current
-                    </span>
-                )}
               </div>
-            ))}
-            {queue.length === 0 && <p className="text-gray-600 italic text-sm">No active customers.</p>}
-          </div>
-        </div>
-
-        {/* RIGHT COLUMN: Recently Completed (History) */}
-        <div>
-            <h3 className="text-gray-400 text-xs font-bold uppercase mb-4 tracking-wider">Just Completed</h3>
-            <div className="space-y-3 opacity-60">
-                {history.slice(0, 3).map((person) => (
-                    <div key={person.token} className="flex items-center justify-between p-3 rounded-lg bg-gray-800 border-l-4 border-green-500">
-                         <div>
-                            <span className="font-mono text-gray-400 text-sm">#{person.token}</span>
-                            <span className="ml-2 font-medium text-gray-300 line-through decoration-gray-500">{person.name}</span>
-                         </div>
-                         <span className="text-green-500 text-xs">Done</span>
-                    </div>
-                ))}
-                {history.length === 0 && <p className="text-gray-600 italic text-sm">No history yet.</p>}
-            </div>
-        </div>
-
+          ))}
       </div>
+
+      {/* DETAILS POPUP MODAL */}
+      {selectedCustomer && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+              <div className="bg-gray-800 rounded-2xl w-full max-w-md p-6 border border-gray-600 shadow-2xl relative">
+                  <button 
+                      onClick={() => setSelectedCustomer(null)}
+                      className="absolute top-4 right-4 text-gray-400 hover:text-white"
+                  >✕</button>
+                  
+                  <div className="text-center mb-6">
+                      <div className="inline-block bg-gray-700 rounded-full px-4 py-1 text-sm font-mono text-blue-300 mb-2">
+                          Token #{selectedCustomer.token}
+                      </div>
+                      <h2 className="text-2xl font-bold">{selectedCustomer.name}</h2>
+                      <p className="text-lg text-gray-400 mt-1">{selectedCustomer.phone}</p>
+                  </div>
+
+                  <div className="bg-gray-900 rounded-xl p-4 mb-6">
+                      <h3 className="text-xs font-bold uppercase text-gray-500 mb-3">Requested Services</h3>
+                      <div className="flex flex-wrap gap-2">
+                          {selectedCustomer.services.map((s, i) => (
+                              <span key={i} className="bg-blue-900/50 text-blue-200 px-3 py-1 rounded-lg text-sm border border-blue-800">
+                                  {s}
+                              </span>
+                          ))}
+                      </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 text-center">
+                      <div className="bg-gray-700 rounded-lg p-3">
+                          <p className="text-xs text-gray-400">Total Duration</p>
+                          <p className="font-bold text-xl">{selectedCustomer.total_duration} min</p>
+                      </div>
+                      <div className="bg-gray-700 rounded-lg p-3">
+                          <p className="text-xs text-gray-400">Joined At</p>
+                          <p className="font-bold text-xl">{selectedCustomer.joined_at}</p>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 }
