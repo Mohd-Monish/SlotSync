@@ -15,11 +15,7 @@ app.add_middleware(
 )
 
 MENU = {
-    "Haircut": 20,
-    "Shave": 10,
-    "Head Massage": 15,
-    "Hair Color": 45,
-    "Facial": 30
+    "Haircut": 20, "Shave": 10, "Head Massage": 15, "Hair Color": 45, "Facial": 30
 }
 
 # --- DB & STATE ---
@@ -30,25 +26,20 @@ current_service_start = None
 
 # --- MODELS ---
 class JoinRequest(BaseModel):
-    name: str
-    phone: str
-    services: List[str]
+    name: str; phone: str; services: List[str]
     @validator('phone')
     def validate_phone(cls, v):
         if not v.isdigit() or len(v) != 10: raise ValueError('Phone must be 10 digits')
         return v
 
 class AddServiceRequest(BaseModel):
-    token: int
-    new_services: List[str]
+    token: int; new_services: List[str]
 
 class MoveRequest(BaseModel):
-    token: int
-    direction: str 
+    token: int; direction: str 
 
 class EditRequest(BaseModel):
-    token: int
-    services: List[str]
+    token: int; services: List[str]
 
 class ActionRequest(BaseModel):
     token: int
@@ -60,12 +51,13 @@ def calculate_status():
     if queue_db and current_service_start:
         elapsed = (datetime.now() - current_service_start).total_seconds()
     
-    # Calculate real remaining seconds
-    seconds_left = max(0, (total_minutes * 60) - elapsed)
+    # Global remaining time (For Admin)
+    global_seconds_left = max(0, (total_minutes * 60) - elapsed)
     
     return {
         "count": len(queue_db), 
-        "seconds_left": int(seconds_left), 
+        "global_seconds_left": int(global_seconds_left), 
+        "elapsed_seconds": int(elapsed), # Send raw elapsed for User Math
         "stats": {
             "served": len(history_db), 
             "minutes": sum(c['total_duration'] for c in history_db)
@@ -82,7 +74,8 @@ def get_status():
     return {
         "shop_status": "Open", 
         "people_ahead": st["count"], 
-        "seconds_left": st["seconds_left"], 
+        "seconds_left": st["global_seconds_left"], # Keeps Admin Panel Working
+        "elapsed_seconds": st["elapsed_seconds"],  # Helps User Panel Logic
         "queue": queue_db, 
         "daily_stats": st["stats"]
     }
@@ -145,9 +138,7 @@ def move_customer(req: MoveRequest):
 def edit_customer(req: EditRequest):
     for c in queue_db:
         if c['token'] == req.token:
-            # 1. Update Services
             c['services'] = req.services
-            # 2. Recalculate Time (Crucial for Global Timer Sync)
             c['total_duration'] = sum(MENU.get(s, 0) for s in req.services)
             return {"message": "Edited"}
     return {"message": "Not found"}
