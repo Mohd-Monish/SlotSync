@@ -4,7 +4,13 @@ import { useState, useEffect } from 'react';
 // 👇 YOUR RENDER LINK
 const API_URL = "https://myspotnow-api.onrender.com"; 
 
-const SERVICES = [ { name: "Haircut", time: 20 }, { name: "Shave", time: 10 }, { name: "Head Massage", time: 15 }, { name: "Facial", time: 30 }, { name: "Hair Color", time: 45 }];
+const SERVICES = [ 
+    { name: "Haircut", time: 20 }, 
+    { name: "Shave", time: 10 }, 
+    { name: "Head Massage", time: 15 }, 
+    { name: "Facial", time: 30 }, 
+    { name: "Hair Color", time: 45 }
+];
 
 export default function Home() {
   const [data, setData] = useState<any>(null);
@@ -16,7 +22,10 @@ export default function Home() {
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [showAddService, setShowAddService] = useState(false); // New modal state
+  const [showAddService, setShowAddService] = useState(false);
+  
+  // Local Timer State (For smooth countdown)
+  const [displayTime, setDisplayTime] = useState(0);
 
   // --- SYNC ---
   useEffect(() => {
@@ -24,8 +33,15 @@ export default function Home() {
     if (savedUser) setCurrentUser(JSON.parse(savedUser));
     
     fetchStatus();
-    const poller = setInterval(fetchStatus, 2000); 
-    return () => clearInterval(poller);
+    // Poll server every 3 seconds to sync up
+    const poller = setInterval(fetchStatus, 3000);
+    
+    // Local countdown every 1 second
+    const timer = setInterval(() => {
+        setDisplayTime(prev => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => { clearInterval(poller); clearInterval(timer); };
   }, []);
 
   const fetchStatus = async () => {
@@ -35,6 +51,19 @@ export default function Home() {
       setData(json);
     } catch (e) { console.error("API Error"); }
   };
+
+  // Update local timer when server data changes (Correction Logic)
+  useEffect(() => {
+      if (data && currentUser) {
+          const myItem = data.queue.find((p:any) => p.phone === currentUser.phone);
+          if (myItem) {
+              // If server says 100s, and we are at 99s, don't jump. Only jump if diff is huge.
+              if (Math.abs(myItem.estimated_wait - displayTime) > 2) {
+                  setDisplayTime(myItem.estimated_wait);
+              }
+          }
+      }
+  }, [data, currentUser]);
 
   // --- ACTIONS ---
   const handleLogin = async (e: React.FormEvent) => {
@@ -107,9 +136,8 @@ export default function Home() {
     else setSelected([...selected, svc]);
   };
 
-  // Safe time formatting
   const formatTime = (s: any) => {
-    if (typeof s !== 'number' || isNaN(s)) return "0:00"; // Fix for NaN
+    if (typeof s !== 'number' || isNaN(s)) return "0:00"; 
     const mins = Math.floor(s / 60); const secs = s % 60;
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
@@ -149,8 +177,9 @@ export default function Home() {
                         ) : (
                             <div className="mb-8">
                                 <p className="text-xs font-bold text-green-400 uppercase tracking-widest mb-2">Your Wait Time</p>
+                                {/* USES LOCAL DISPLAY TIME FOR SMOOTHNESS */}
                                 <div className="text-7xl font-mono font-bold text-white tracking-tighter drop-shadow-[0_0_20px_rgba(34,197,94,0.3)]">
-                                    {formatTime(myQueueItem.estimated_wait)}
+                                    {formatTime(displayTime)}
                                 </div>
                                 <div className="mt-4 flex justify-center gap-4">
                                     <div className="bg-white/5 px-4 py-2 rounded-lg">
@@ -169,9 +198,12 @@ export default function Home() {
                              <button onClick={() => setShowAddService(true)} className="px-4 py-2 bg-blue-600/20 text-blue-400 text-sm font-bold rounded-lg hover:bg-blue-600 hover:text-white transition">
                                  + Add Services
                              </button>
-                             <button onClick={() => handleCancel(myQueueItem.token)} disabled={loading} className="px-4 py-2 bg-red-600/20 text-red-400 text-sm font-bold rounded-lg hover:bg-red-600 hover:text-white transition">
-                                 Cancel
-                             </button>
+                             {/* HIDE CANCEL BUTTON IF SERVING */}
+                             {!isServingNow && (
+                                <button onClick={() => handleCancel(myQueueItem.token)} disabled={loading} className="px-4 py-2 bg-red-600/20 text-red-400 text-sm font-bold rounded-lg hover:bg-red-600 hover:text-white transition">
+                                    Cancel
+                                </button>
+                             )}
                         </div>
                      </>
                  ) : (
@@ -204,16 +236,35 @@ export default function Home() {
              </div>
          )}
 
-         {/* ADD SERVICE MODAL */}
+         {/* ADD SERVICE MODAL (With Disabled Duplicates) */}
          {showAddService && (
              <div className="absolute inset-0 bg-black/90 z-50 p-8 animate-in slide-in-from-bottom duration-300">
                 <h2 className="text-xl font-bold text-white mb-4">Add More Services</h2>
                 <div className="grid grid-cols-2 gap-2 mb-6">
-                    {SERVICES.map(s => (
-                        <button key={s.name} onClick={() => toggleService(s.name)} className={`p-3 rounded-xl text-sm font-bold border transition-all ${selected.includes(s.name) ? 'bg-blue-500 text-white border-blue-500' : 'bg-white/5 text-gray-400 border-white/5'}`}>
-                            {s.name} <span className="block text-[10px] opacity-60 font-normal">{s.time}m</span>
-                        </button>
-                    ))}
+                    {SERVICES.map(s => {
+                        // Check if user ALREADY has this service
+                        const alreadyHas = myQueueItem.services.includes(s.name);
+                        
+                        return (
+                            <button 
+                                key={s.name} 
+                                onClick={() => !alreadyHas && toggleService(s.name)} 
+                                disabled={alreadyHas}
+                                className={`p-3 rounded-xl text-sm font-bold border transition-all 
+                                    ${alreadyHas 
+                                        ? 'bg-neutral-800 text-gray-600 border-transparent cursor-not-allowed opacity-50' 
+                                        : selected.includes(s.name) 
+                                            ? 'bg-blue-500 text-white border-blue-500' 
+                                            : 'bg-white/5 text-gray-400 border-white/5'
+                                    }`}
+                            >
+                                {s.name} 
+                                <span className="block text-[10px] opacity-60 font-normal">
+                                    {alreadyHas ? "Added" : `${s.time}m`}
+                                </span>
+                            </button>
+                        );
+                    })}
                 </div>
                 <div className="flex gap-2">
                     <button onClick={handleAddServices} disabled={loading} className="flex-1 bg-blue-500 text-white font-bold py-3 rounded-xl hover:bg-blue-400">Update</button>

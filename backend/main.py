@@ -9,7 +9,6 @@ from passlib.context import CryptContext
 
 app = FastAPI()
 
-# --- CONFIG ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -34,7 +33,6 @@ try:
 except Exception as e:
     print(f"❌ DB Error: {e}")
 
-# --- HELPERS ---
 def get_password_hash(password): return pwd_context.hash(password)
 def verify_password(plain, hashed): return pwd_context.verify(plain, hashed)
 
@@ -46,7 +44,6 @@ def get_service_start_time():
 def set_service_start_time(dt):
     config_col.update_one({"_id": "timer_state"}, {"$set": {"start_time": dt}}, upsert=True)
 
-# --- MODELS ---
 class UserSignup(BaseModel):
     username: str; password: str; phone: str; name: str
 
@@ -67,8 +64,6 @@ class EditRequest(BaseModel):
 
 class MoveRequest(BaseModel):
     token: int; direction: str
-
-# --- ROUTES ---
 
 @app.get("/queue/status")
 def get_status():
@@ -154,7 +149,6 @@ def add_service(req: AddServiceRequest):
     user = queue_col.find_one({"token": req.token})
     if not user: raise HTTPException(404, "User not found")
     
-    # Combine old services with new ones (avoid duplicates)
     updated_services = list(set(user['services'] + req.new_services))
     new_duration = sum(MENU.get(s, 0) for s in updated_services)
     
