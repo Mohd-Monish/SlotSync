@@ -86,7 +86,7 @@ export default function Admin() {
           <div className="w-full max-w-sm bg-white/5 backdrop-blur-xl border border-white/10 p-8 rounded-3xl shadow-2xl animate-in zoom-in-95 duration-500">
               <div className="text-center mb-8">
                   <div className="w-20 h-20 bg-white/5 rounded-2xl flex items-center justify-center mx-auto mb-6 border border-white/10 shadow-lg">
-                      <img src="/logo.png" alt="Logo" className="w-12 h-12 object-contain" />
+                      <img src="/logo_no-text.png" alt="Logo" className="w-12 h-12 object-contain" />
                   </div>
                   <h1 className="text-2xl font-bold text-white">Admin Portal</h1>
                   <p className="text-gray-500 text-sm">Secure Access Required</p>
