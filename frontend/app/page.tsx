@@ -149,6 +149,16 @@ export default function Home() {
   const peopleAhead = myIndex > 0 ? myIndex : 0;
   const isServingNow = amIInQueue && myIndex === 0;
 
+  if (!data) return (
+      <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-gray-900 via-black to-black z-50 flex flex-col items-center justify-center">
+          <div className="relative">
+              <div className="absolute inset-0 bg-green-500/20 blur-3xl rounded-full"></div>
+              <img src="/logo_no-text.png" alt="Loading" className="w-24 h-24 object-contain animate-spin relative z-10" />
+          </div>
+          <p className="mt-8 text-green-500/50 text-xs font-mono tracking-[0.5em] animate-pulse">SYNCHRONIZING</p>
+      </div>
+  );
+
   return (
     <main className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-black to-black flex items-center justify-center p-4 md:p-8 font-sans text-gray-200 overflow-hidden">
       

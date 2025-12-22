@@ -96,10 +96,25 @@ export default function Admin() {
                   <input type="password" className="w-full p-4 bg-black/50 border border-white/10 rounded-xl text-white outline-none focus:border-green-500 transition-colors" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} />
                   {error && <p className="text-red-400 text-xs text-center bg-red-500/10 py-2 rounded animate-in shake">{error}</p>}
                   <button disabled={loading} className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-black font-bold py-4 rounded-xl shadow-lg shadow-green-900/20 transition-all transform active:scale-95">
-                    {loading ? "Authenticating..." : "Access Dashboard"}
+                    {loading ? (
+                        <div className="flex items-center justify-center gap-2">
+                            <img src="/logo_no-text.png" className="w-5 h-5 animate-spin invert" />
+                            <span>Verifying...</span>
+                        </div>
+                    ) : "Access Dashboard"}
                   </button>
               </form>
           </div>
+      </div>
+  );
+
+  if (!data) return (
+      <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center">
+          <div className="relative">
+              <div className="absolute inset-0 bg-blue-500/20 blur-3xl rounded-full"></div>
+              <img src="/logo_no-text.png" alt="Loading" className="w-20 h-20 object-contain animate-spin relative z-10" />
+          </div>
+          <p className="mt-6 text-blue-500/50 text-xs font-mono tracking-[0.3em] animate-pulse">LOADING DASHBOARD</p>
       </div>
   );
 
