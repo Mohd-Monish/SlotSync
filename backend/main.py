@@ -10,52 +10,33 @@ from passlib.context import CryptContext
 app = FastAPI()
 
 # --- CONFIG ---
-origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "https://test.slotsync.in",        # Your specific Website
-    "https://www.test.slotsync.in",    # Your Website (www version)
-    "https://myspotnow-api.onrender.com" # Self
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,      # <--- We list them explicitly here
-    allow_credentials=True,     # Now this is allowed!
+    allow_origins=["*"], 
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-MENU = {
-    "Haircut": 20, "Shave": 10, "Head Massage": 15, "Hair Color": 45, "Facial": 30
-}
 
-# --- SECURITY & DB CONNECTION ---
-# Your MongoDB Connection String
-# NEW (Secure)
-MONGO_URI = os.getenv("MONGO_URI")
+MENU = { "Haircut": 20, "Shave": 10, "Head Massage": 15, "Hair Color": 45, "Facial": 30 }
+MONGO_URI = os.getenv("MONGO_URI") 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 try:
     client = MongoClient(MONGO_URI)
     db = client["slotsync_db"]
-    
-    # COLLECTIONS
-    queue_col = db["queue"]       # Active Queue
-    history_col = db["history"]   # Booking Logs
-    users_col = db["users"]       # User Accounts
-    admins_col = db["admins"]     # Admin Accounts
-    config_col = db["config"]     # Timer State
-    
+    queue_col = db["queue"]
+    history_col = db["history"]
+    users_col = db["users"]
+    admins_col = db["admins"]
+    config_col = db["config"]
     print("✅ Connected to MongoDB")
 except Exception as e:
     print(f"❌ DB Error: {e}")
 
 # --- HELPERS ---
-def get_password_hash(password):
-    return pwd_context.hash(password)
-
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+def get_password_hash(password): return pwd_context.hash(password)
+def verify_password(plain, hashed): return pwd_context.verify(plain, hashed)
 
 def get_service_start_time():
     config = config_col.find_one({"_id": "timer_state"})
@@ -74,171 +55,153 @@ class LoginRequest(BaseModel):
 
 class JoinRequest(BaseModel):
     name: str; phone: str; services: List[str]
-    @validator('phone')
-    def validate_phone(cls, v):
-        if not v.isdigit() or len(v) != 10: raise ValueError('Phone must be 10 digits')
-        return v
-
-class AddServiceRequest(BaseModel):
-    token: int; new_services: List[str]
-
-class MoveRequest(BaseModel):
-    token: int; direction: str 
-
-class EditRequest(BaseModel):
-    token: int; services: List[str]
 
 class ActionRequest(BaseModel):
     token: int
 
-# --- AUTH ENDPOINTS (NEW) ---
+class EditRequest(BaseModel):
+    token: int; services: List[str]
+
+class MoveRequest(BaseModel):
+    token: int; direction: str
+
+# --- ROUTES ---
+
+@app.get("/queue/status")
+def get_status():
+    # 1. Get raw queue sorted by order
+    queue_list = list(queue_col.find().sort("order_index", 1))
+    
+    # 2. Calculate "Time Served" for the current person
+    start_time = get_service_start_time()
+    time_served_so_far = 0
+    if queue_list and start_time:
+        delta = datetime.now() - start_time
+        time_served_so_far = max(0, delta.total_seconds())
+    
+    # 3. Calculate INDIVIDUAL wait times for everyone
+    cumulative_wait = 0
+    
+    for index, person in enumerate(queue_list):
+        person.pop("_id", None) # Clean ID
+        
+        # Duration of THIS person's service in seconds
+        person_duration_sec = person['total_duration'] * 60
+        
+        if index == 0:
+            # First person: Wait is (Duration - Time Served)
+            remaining = max(0, person_duration_sec - time_served_so_far)
+            person['estimated_wait'] = 0 # They are serving now
+            person['time_remaining_in_service'] = int(remaining)
+            cumulative_wait = remaining # This is the wait for the NEXT person
+        else:
+            # Everyone else: Wait is the accumulative pile before them
+            person['estimated_wait'] = int(cumulative_wait)
+            person['time_remaining_in_service'] = int(person_duration_sec)
+            cumulative_wait += person_duration_sec
+
+    # 4. Total Shop Wait (Time until empty)
+    global_wait = cumulative_wait
+    
+    return {
+        "shop_status": "Open", 
+        "people_ahead": len(queue_list),
+        "queue": queue_list,
+        "seconds_left": int(global_wait) # For stats only
+    }
 
 @app.post("/auth/signup")
 def user_signup(req: UserSignup):
-    if users_col.find_one({"username": req.username}):
-        raise HTTPException(400, "Username already taken")
-    
-    new_user = {
-        "username": req.username,
-        "password": get_password_hash(req.password),
-        "phone": req.phone,
-        "name": req.name,
-        "created_at": datetime.now()
-    }
+    if users_col.find_one({"username": req.username}): raise HTTPException(400, "Username taken")
+    new_user = { "username": req.username, "password": get_password_hash(req.password), "phone": req.phone, "name": req.name }
     users_col.insert_one(new_user)
     return {"message": "Account created"}
 
 @app.post("/auth/login")
 def user_login(req: LoginRequest):
     user = users_col.find_one({"username": req.username})
-    if not user or not verify_password(req.password, user['password']):
-        raise HTTPException(401, "Invalid credentials")
-    return {"message": "Login successful", "name": user['name'], "phone": user['phone']}
+    if not user or not verify_password(req.password, user['password']): raise HTTPException(401, "Invalid")
+    return {"message": "Success", "name": user['name'], "phone": user['phone']}
 
 @app.post("/admin/create")
 def create_admin(req: LoginRequest):
-    # Security: Check if admin already exists
-    if admins_col.count_documents({}) > 0:
-        raise HTTPException(403, "Admin already exists")
-    
-    admin = {
-        "username": req.username,
-        "password": get_password_hash(req.password)
-    }
-    admins_col.insert_one(admin)
+    if admins_col.count_documents({}) > 0: raise HTTPException(403, "Admin exists")
+    admins_col.insert_one({"username": req.username, "password": get_password_hash(req.password)})
     return {"message": "Admin created"}
 
 @app.post("/admin/login")
 def admin_login(req: LoginRequest):
     admin = admins_col.find_one({"username": req.username})
-    if not admin or not verify_password(req.password, admin['password']):
-        raise HTTPException(401, "Invalid admin credentials")
-    return {"message": "Welcome Admin", "access": "granted"}
-
-# --- QUEUE ENDPOINTS ---
-
-@app.get("/queue/status")
-def get_status():
-    queue_list = list(queue_col.find().sort("order_index", 1))
-    total_minutes = sum(c['total_duration'] for c in queue_list)
-    
-    start_time = get_service_start_time()
-    elapsed = 0
-    if queue_list and start_time:
-        elapsed = (datetime.now() - start_time).total_seconds()
-    
-    global_seconds_left = max(0, (total_minutes * 60) - elapsed)
-    
-    # Stats
-    history_count = history_col.count_documents({})
-    
-    for q in queue_list: q.pop("_id", None)
-    
-    return {
-        "shop_status": "Open", 
-        "people_ahead": len(queue_list),
-        "seconds_left": int(global_seconds_left), 
-        "elapsed_seconds": int(elapsed),
-        "queue": queue_list, 
-        "daily_stats": {"served": history_count}
-    }
+    if not admin or not verify_password(req.password, admin['password']): raise HTTPException(401, "Invalid")
+    return {"message": "Welcome Admin"}
 
 @app.post("/queue/join")
 def join_queue(req: JoinRequest):
     if queue_col.count_documents({}) == 0: set_service_start_time(datetime.now())
-
-    # Get Next Token
+    
     last_q = queue_col.find_one(sort=[("token", -1)])
     last_h = history_col.find_one(sort=[("token", -1)])
     t1 = last_q["token"] if last_q else 99
     t2 = last_h["token"] if last_h else 99
     new_token = max(t1, t2) + 1
     
-    # Get Order Index
     last_item = queue_col.find_one(sort=[("order_index", -1)])
     new_order = (last_item["order_index"] + 1) if last_item else 1
-
+    
     dur = sum(MENU.get(s, 0) for s in list(set(req.services)))
-
-    new_customer = {
+    
+    queue_col.insert_one({
         "token": new_token, "name": req.name, "phone": req.phone, 
         "services": list(set(req.services)), "total_duration": dur, 
-        "status": "waiting", 
-        "joined_at": datetime.now(),
-        "joined_at_str": datetime.now().strftime("%I:%M %p"),
-        "order_index": new_order
-    }
-    queue_col.insert_one(new_customer)
+        "order_index": new_order, "joined_at_str": datetime.now().strftime("%I:%M %p")
+    })
     return {"message": "Joined", "token": new_token}
+
+@app.post("/queue/cancel")
+def cancel_booking(req: ActionRequest):
+    # Check if this person is currently being served (index 0)
+    user = queue_col.find_one({"token": req.token})
+    if not user: return {"message": "Not found"}
+    
+    # If we delete the first person, we must reset the timer for the next person
+    first_person = queue_col.find_one(sort=[("order_index", 1)])
+    if first_person and first_person["token"] == req.token:
+        set_service_start_time(datetime.now()) # Reset timer for next person
+
+    queue_col.delete_one({"token": req.token})
+    
+    # If queue is empty after delete
+    if queue_col.count_documents({}) == 0: set_service_start_time(None)
+    
+    return {"message": "Cancelled"}
 
 @app.post("/queue/next")
 def next_customer():
     first = queue_col.find_one(sort=[("order_index", 1)])
     if not first: return {"message": "Empty"}
     
-    # Log to History with completion time
-    first["status"] = "completed"
-    first["completed_at"] = datetime.now()
-    first["completed_at_str"] = datetime.now().strftime("%I:%M %p")
-    
     history_col.insert_one(first)
     queue_col.delete_one({"_id": first["_id"]})
     
     if queue_col.count_documents({}) > 0: set_service_start_time(datetime.now())
     else: set_service_start_time(None)
-        
     return {"message": "Next"}
-
-# --- OTHER UTILS (Add/Move/Edit/Delete/Reset/ServeNow) ---
-
-@app.post("/queue/add-service")
-def add_service(req: AddServiceRequest):
-    customer = queue_col.find_one({"token": req.token})
-    if not customer: raise HTTPException(404, "Not found")
-    updated = list(set(customer["services"] + req.new_services))
-    new_dur = sum(MENU.get(s, 0) for s in updated)
-    queue_col.update_one({"token": req.token}, {"$set": {"services": updated, "total_duration": new_dur}})
-    return {"message": "Updated"}
 
 @app.post("/queue/move")
 def move_customer(req: MoveRequest):
-    person = queue_col.find_one({"token": req.token})
-    if not person: return {"message": "Not found"}
-    current_order = person["order_index"]
-    if req.direction == "up":
-        neighbor = queue_col.find_one({"order_index": {"$lt": current_order}}, sort=[("order_index", -1)])
-    else:
-        neighbor = queue_col.find_one({"order_index": {"$gt": current_order}}, sort=[("order_index", 1)])
-    if neighbor:
-        queue_col.update_one({"_id": person["_id"]}, {"$set": {"order_index": neighbor["order_index"]}})
-        queue_col.update_one({"_id": neighbor["_id"]}, {"$set": {"order_index": current_order}})
+    p = queue_col.find_one({"token": req.token})
+    if not p: return {"message": "Not found"}
+    curr = p["order_index"]
+    target = queue_col.find_one({"order_index": {"$lt": curr}}, sort=[("order_index", -1)]) if req.direction == "up" else queue_col.find_one({"order_index": {"$gt": curr}}, sort=[("order_index", 1)])
+    if target:
+        queue_col.update_one({"_id": p["_id"]}, {"$set": {"order_index": target["order_index"]}})
+        queue_col.update_one({"_id": target["_id"]}, {"$set": {"order_index": curr}})
     return {"message": "Moved"}
 
 @app.post("/queue/edit")
 def edit_customer(req: EditRequest):
-    new_dur = sum(MENU.get(s, 0) for s in req.services)
-    res = queue_col.update_one({"token": req.token}, {"$set": {"services": req.services, "total_duration": new_dur}})
-    if res.matched_count == 0: return {"message": "Not found"}
+    dur = sum(MENU.get(s, 0) for s in req.services)
+    queue_col.update_one({"token": req.token}, {"$set": {"services": req.services, "total_duration": dur}})
     return {"message": "Edited"}
 
 @app.post("/queue/delete")
@@ -246,16 +209,16 @@ def delete_customer(req: ActionRequest):
     queue_col.delete_one({"token": req.token})
     return {"message": "Deleted"}
 
-@app.post("/queue/serve-now")
-def serve_now(req: ActionRequest):
-    first = queue_col.find_one(sort=[("order_index", 1)])
-    lowest = first["order_index"] if first else 1
-    queue_col.update_one({"token": req.token}, {"$set": {"order_index": lowest - 1}})
-    return {"message": "Front"}
-
 @app.post("/queue/reset")
 def reset():
     queue_col.delete_many({})
     history_col.delete_many({})
     set_service_start_time(None)
     return {"message": "Reset"}
+
+@app.post("/queue/serve-now")
+def serve_now(req: ActionRequest):
+    first = queue_col.find_one(sort=[("order_index", 1)])
+    lowest = first["order_index"] if first else 1
+    queue_col.update_one({"token": req.token}, {"$set": {"order_index": lowest - 1}})
+    return {"message": "Front"}

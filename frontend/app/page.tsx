@@ -1,20 +1,14 @@
 "use client";
 import { useState, useEffect } from 'react';
 
-// 👇 REPLACE THIS WITH YOUR ACTUAL RENDER BACKEND URL
+// 👇 YOUR RENDER LINK
 const API_URL = "https://myspotnow-api.onrender.com"; 
 
-const SERVICES = [
-  { name: "Haircut", time: 20 },
-  { name: "Shave", time: 10 },
-  { name: "Head Massage", time: 15 },
-  { name: "Facial", time: 30 },
-];
+const SERVICES = [ { name: "Haircut", time: 20 }, { name: "Shave", time: 10 }, { name: "Head Massage", time: 15 }, { name: "Facial", time: 30 } ];
 
 export default function Home() {
   const [data, setData] = useState<any>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [myWaitTime, setMyWaitTime] = useState(0); 
   
   // UI State
   const [view, setView] = useState("home"); 
@@ -27,13 +21,11 @@ export default function Home() {
   useEffect(() => {
     const savedUser = localStorage.getItem('slotSync_user');
     if (savedUser) setCurrentUser(JSON.parse(savedUser));
-
+    
     fetchStatus();
-    const poller = setInterval(fetchStatus, 3000);
-    const timer = setInterval(() => {
-        setMyWaitTime(prev => prev > 0 ? prev - 1 : 0);
-    }, 1000);
-    return () => { clearInterval(poller); clearInterval(timer); };
+    // Poll every 2 seconds for faster updates
+    const poller = setInterval(fetchStatus, 2000); 
+    return () => clearInterval(poller);
   }, []);
 
   const fetchStatus = async () => {
@@ -41,25 +33,10 @@ export default function Home() {
       const res = await fetch(`${API_URL}/queue/status`);
       const json = await res.json();
       setData(json);
-      // Sync wait time
-      if (Math.abs(json.seconds_left - myWaitTime) > 2) setMyWaitTime(json.seconds_left);
     } catch (e) { console.error("API Error"); }
   };
 
-  // --- AUTH HANDLERS ---
-  const handleSignup = async (e: React.FormEvent) => {
-      e.preventDefault(); setLoading(true); setError("");
-      try {
-          const res = await fetch(`${API_URL}/auth/signup`, {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(form)
-          });
-          if (res.ok) { alert("Account Created! Please Login."); setView("login"); } 
-          else { const err = await res.json(); setError(err.detail || "Signup Failed"); }
-      } catch (err) { setError("Server Error"); }
-      setLoading(false);
-  };
-
+  // --- ACTIONS ---
   const handleLogin = async (e: React.FormEvent) => {
       e.preventDefault(); setLoading(true); setError("");
       try {
@@ -78,13 +55,19 @@ export default function Home() {
       setLoading(false);
   };
 
-  const logout = () => {
-      localStorage.removeItem('slotSync_user');
-      setCurrentUser(null);
-      setView("home");
+  const handleSignup = async (e: React.FormEvent) => {
+      e.preventDefault(); setLoading(true); setError("");
+      try {
+          const res = await fetch(`${API_URL}/auth/signup`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(form)
+          });
+          if (res.ok) { alert("Created! Please Login."); setView("login"); } 
+          else { const err = await res.json(); setError(err.detail || "Failed"); }
+      } catch (err) { setError("Server Error"); }
+      setLoading(false);
   };
 
-  // --- JOIN HANDLER ---
   const handleJoin = async () => {
     if (selected.length === 0) return alert("Select a service");
     setLoading(true);
@@ -92,9 +75,17 @@ export default function Home() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: currentUser.name, phone: currentUser.phone, services: selected }),
     });
-    setLoading(false);
-    setView("home");
-    fetchStatus();
+    setLoading(false); setView("home"); fetchStatus();
+  };
+
+  const handleCancel = async (token: number) => {
+      if(!confirm("Cancel your booking?")) return;
+      setLoading(true);
+      await fetch(`${API_URL}/queue/cancel`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+      });
+      setLoading(false); fetchStatus();
   };
 
   const toggleService = (svc: string) => {
@@ -103,194 +94,150 @@ export default function Home() {
   };
 
   const formatTime = (s: number) => {
-    const mins = Math.floor(s / 60);
-    const secs = s % 60;
+    const mins = Math.floor(s / 60); const secs = s % 60;
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
-  const amIInQueue = data?.queue.some((p:any) => p.phone === currentUser?.phone);
+  // --- DERIVED STATE ---
+  // Find my object in the queue list
   const myQueueItem = data?.queue.find((p:any) => p.phone === currentUser?.phone);
+  const amIInQueue = !!myQueueItem;
+  
+  // Calculate people ahead: My index - 0 (serving index)
+  const myIndex = data?.queue.findIndex((p:any) => p.phone === currentUser?.phone);
+  const peopleAhead = myIndex > 0 ? myIndex : 0;
+  
+  // Am I serving now?
+  const isServingNow = amIInQueue && myIndex === 0;
 
   return (
     <main className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-black to-black flex items-center justify-center p-4 md:p-8 font-sans text-gray-200">
       
-      <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-          
-          {/* LEFT SIDE - DESKTOP HERO (Hidden on mobile/tablet) */}
-          <div className="hidden lg:block space-y-8 animate-in slide-in-from-left-10 duration-700">
-              <h1 className="text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-600">
-                  SlotSync
-              </h1>
-              <p className="text-2xl text-gray-400 max-w-lg leading-relaxed">
-                  The smartest way to manage your time. Book appointments, track live queues, and save hours every week.
-              </p>
-              <div className="flex gap-8 pt-4 border-t border-white/10">
-                  <div>
-                      <p className="text-3xl font-bold text-white">Live</p>
-                      <p className="text-sm text-gray-500">Queue Updates</p>
-                  </div>
-                  <div>
-                      <p className="text-3xl font-bold text-white">0m</p>
-                      <p className="text-sm text-gray-500">Wasted Time</p>
-                  </div>
-              </div>
-          </div>
+      <div className="w-full max-w-md bg-neutral-900/50 backdrop-blur-xl border border-white/10 rounded-[2rem] shadow-2xl relative overflow-hidden">
+         
+         {/* HEADER */}
+         <div className="flex justify-between items-center p-6 border-b border-white/5">
+            <h1 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-600">SlotSync</h1>
+            {currentUser ? (
+                <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">{currentUser.name}</span>
+                    <button onClick={() => { localStorage.removeItem('slotSync_user'); setCurrentUser(null); }} className="text-[10px] text-red-400 border border-red-500/20 px-2 py-1 rounded-full">Logout</button>
+                </div>
+            ) : <button onClick={() => setView("login")} className="text-sm text-green-400 font-bold">Login</button>}
+         </div>
 
-          {/* RIGHT SIDE - APP INTERFACE */}
-          <div className="flex flex-col items-center lg:items-end w-full">
-              
-              {/* Header (Adaptive) */}
-              <div className="w-full max-w-md flex justify-between items-center mb-6 px-2">
-                  {/* Mobile Logo */}
-                  <h1 className="lg:hidden text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-500">SlotSync</h1>
-                  
-                  {/* Desktop Spacer */}
-                  <div className="hidden lg:block"></div>
-
-                  {/* User Controls */}
-                  {currentUser ? (
-                      <div className="flex items-center gap-3 bg-white/5 px-4 py-2 rounded-full border border-white/10 backdrop-blur-md">
-                          <span className="text-sm text-gray-300 font-medium">Hi, {currentUser.name}</span>
-                          <button onClick={logout} className="text-xs text-red-400 hover:text-red-300 font-bold transition-colors">Logout</button>
-                      </div>
-                  ) : (
-                      <button onClick={() => setView("login")} className="text-sm text-green-400 font-bold hover:text-green-300 transition-colors">Login</button>
-                  )}
-              </div>
-
-              {/* Main Card */}
-              <div className="w-full max-w-md bg-neutral-900/50 backdrop-blur-xl border border-white/10 rounded-[2rem] shadow-2xl relative overflow-hidden animate-in zoom-in-95 duration-500">
-                
-                {/* Decorative Elements */}
-                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-green-500 via-emerald-500 to-teal-500 opacity-50"></div>
-                <div className="absolute -top-24 -right-24 w-48 h-48 bg-green-500/10 rounded-full blur-3xl pointer-events-none"></div>
-                <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"></div>
-
-                {/* VIEW: HOME */}
-                {view === "home" && (
-                    <div className="p-10 text-center relative z-10">
-                        
-                        {/* 1. BIG TIMER AT TOP */}
-                        <div className="mb-10">
-                            <p className="text-xs font-bold text-green-400 uppercase tracking-[0.2em] mb-4">Estimated Wait</p>
-                            <div className="relative inline-block">
-                                <div className="text-7xl font-mono font-bold text-white tracking-tighter drop-shadow-[0_0_30px_rgba(34,197,94,0.3)]">
-                                    {formatTime(myWaitTime)}
-                                </div>
-                                {/* Subtle reflection/glow */}
-                                <div className="absolute -inset-4 bg-green-500/5 blur-xl rounded-full -z-10"></div>
-                            </div>
-                        </div>
-
-                        {/* 2. TICKET NUMBER BELOW */}
-                        {amIInQueue ? (
-                            <div className="inline-block px-8 py-4 bg-white/5 rounded-2xl border border-white/10 mb-10 backdrop-blur-md shadow-lg">
-                                <span className="text-gray-400 text-sm uppercase tracking-wider font-bold block mb-1">Your Ticket</span>
-                                <span className="text-white font-black text-4xl">#{myQueueItem.token}</span>
+         {/* VIEW: HOME */}
+         {view === "home" && (
+             <div className="p-8 text-center">
+                 
+                 {/* 1. STATUS DISPLAY */}
+                 {amIInQueue ? (
+                     <>
+                        {isServingNow ? (
+                            <div className="mb-8 animate-pulse">
+                                <div className="text-6xl mb-2">✂️</div>
+                                <h2 className="text-3xl font-black text-green-500">SERVING NOW</h2>
+                                <p className="text-gray-400 text-sm">Please proceed to the chair</p>
                             </div>
                         ) : (
-                            <div className="mb-10 flex flex-col items-center gap-2">
-                                <span className="text-gray-500 text-sm font-medium">People Ahead</span>
-                                <span className="text-3xl font-bold text-white">{data?.people_ahead || 0}</span>
+                            <div className="mb-8">
+                                <p className="text-xs font-bold text-green-400 uppercase tracking-widest mb-2">Your Wait Time</p>
+                                <div className="text-7xl font-mono font-bold text-white tracking-tighter drop-shadow-[0_0_20px_rgba(34,197,94,0.3)]">
+                                    {formatTime(myQueueItem.estimated_wait)}
+                                </div>
+                                <div className="mt-4 flex justify-center gap-4">
+                                    <div className="bg-white/5 px-4 py-2 rounded-lg">
+                                        <p className="text-[10px] text-gray-500 uppercase">Token</p>
+                                        <p className="text-xl font-bold text-white">#{myQueueItem.token}</p>
+                                    </div>
+                                    <div className="bg-white/5 px-4 py-2 rounded-lg">
+                                        <p className="text-[10px] text-gray-500 uppercase">Ahead</p>
+                                        <p className="text-xl font-bold text-white">{peopleAhead}</p>
+                                    </div>
+                                </div>
                             </div>
                         )}
-
-                        {!amIInQueue && (
-                            <button 
-                                onClick={() => currentUser ? setView("join") : setView("login")}
-                                className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-black font-black py-4 rounded-xl text-lg shadow-lg shadow-green-900/20 transition-all transform active:scale-95"
-                            >
-                                {currentUser ? "Book Now" : "Login to Book"}
-                            </button>
-                        )}
-                    </div>
-                )}
-
-                {/* LOGIN FORM */}
-                {view === "login" && (
-                    <div className="p-8 relative z-10">
-                        <h2 className="text-3xl font-bold text-white mb-2">Welcome Back</h2>
-                        <p className="text-gray-500 text-sm mb-8">Enter your credentials to access your account</p>
                         
-                        <form onSubmit={handleLogin} className="space-y-4">
-                            <div className="space-y-4">
-                                <input className="w-full p-4 bg-black/40 border border-white/10 rounded-xl text-white placeholder-gray-600 outline-none focus:border-green-500 focus:bg-black/60 transition-all" placeholder="Username" 
-                                    value={form.username} onChange={e => setForm({...form, username: e.target.value})} />
-                                <input type="password" className="w-full p-4 bg-black/40 border border-white/10 rounded-xl text-white placeholder-gray-600 outline-none focus:border-green-500 focus:bg-black/60 transition-all" placeholder="Password" 
-                                    value={form.password} onChange={e => setForm({...form, password: e.target.value})} />
-                            </div>
-                            
-                            {error && <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs text-center">{error}</div>}
-                            
-                            <button disabled={loading} className="w-full bg-white hover:bg-gray-100 text-black font-bold py-4 rounded-xl transition-all transform active:scale-95 mt-4">
-                                {loading ? "Loading..." : "Login"}
-                            </button>
-                            
-                            <div className="flex flex-col items-center gap-3 mt-6">
-                                <p className="text-sm text-gray-500">Don't have an account? <span className="text-white font-bold cursor-pointer hover:underline" onClick={()=>setView("signup")}>Sign up</span></p>
-                                <p className="text-xs text-gray-600 cursor-pointer hover:text-gray-400 transition-colors" onClick={()=>setView("home")}>Cancel</p>
-                            </div>
-                        </form>
-                    </div>
-                )}
-
-                {/* SIGNUP FORM */}
-                {view === "signup" && (
-                    <div className="p-8 relative z-10">
-                        <h2 className="text-3xl font-bold text-white mb-2">Create Account</h2>
-                        <p className="text-gray-500 text-sm mb-8">Join us to book your slot</p>
-
-                        <form onSubmit={handleSignup} className="space-y-3">
-                            <input className="w-full p-4 bg-black/40 border border-white/10 rounded-xl text-white placeholder-gray-600 outline-none focus:border-green-500 focus:bg-black/60 transition-all" placeholder="Full Name" 
-                                value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-                            <input className="w-full p-4 bg-black/40 border border-white/10 rounded-xl text-white placeholder-gray-600 outline-none focus:border-green-500 focus:bg-black/60 transition-all" placeholder="Phone" maxLength={10}
-                                value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} />
-                            <input className="w-full p-4 bg-black/40 border border-white/10 rounded-xl text-white placeholder-gray-600 outline-none focus:border-green-500 focus:bg-black/60 transition-all" placeholder="Username" 
-                                value={form.username} onChange={e => setForm({...form, username: e.target.value})} />
-                            <input type="password" className="w-full p-4 bg-black/40 border border-white/10 rounded-xl text-white placeholder-gray-600 outline-none focus:border-green-500 focus:bg-black/60 transition-all" placeholder="Password" 
-                                value={form.password} onChange={e => setForm({...form, password: e.target.value})} />
-                            
-                            {error && <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs text-center">{error}</div>}
-                            
-                            <button disabled={loading} className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-black font-bold py-4 rounded-xl shadow-lg shadow-green-900/20 transition-all transform active:scale-95 mt-2">
-                                {loading ? "Creating..." : "Sign Up"}
-                            </button>
-                            
-                            <p className="text-center text-sm text-gray-500 mt-6">Already have an account? <span className="text-white font-bold cursor-pointer hover:underline" onClick={()=>setView("login")}>Login</span></p>
-                        </form>
-                    </div>
-                )}
-
-                {/* JOIN FORM */}
-                {view === "join" && (
-                    <div className="p-8 relative z-10">
-                        <h2 className="text-2xl font-bold text-white mb-2">Select Services</h2>
-                        <p className="text-gray-500 text-sm mb-6">Choose what you need today</p>
-                        
-                        <div className="grid grid-cols-2 gap-3 mb-8">
-                            {SERVICES.map(s => (
-                                <button key={s.name} onClick={() => toggleService(s.name)}
-                                    className={`p-4 rounded-2xl text-sm font-bold border transition-all duration-200 flex flex-col items-start gap-1
-                                    ${selected.includes(s.name) 
-                                        ? 'bg-green-500 text-black border-green-400 shadow-[0_0_20px_rgba(34,197,94,0.3)] scale-[1.02]' 
-                                        : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:border-white/20'}`}
-                                >
-                                    <span>{s.name}</span>
-                                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${selected.includes(s.name) ? 'bg-black/20 text-black' : 'bg-white/10 text-gray-500'}`}>{s.time}m</span>
-                                </button>
-                            ))}
-                        </div>
-                        
-                        <button onClick={handleJoin} disabled={loading} className="w-full bg-white hover:bg-gray-100 text-black font-black py-4 rounded-xl shadow-lg transition-all transform active:scale-95">
-                            {loading ? "Processing..." : "Confirm Booking"}
+                        <button onClick={() => handleCancel(myQueueItem.token)} disabled={loading} className="text-sm text-red-500 hover:text-red-400 underline decoration-red-500/30">
+                            {loading ? "..." : "Cancel Booking"}
                         </button>
-                        
-                        <p className="text-center text-xs text-gray-600 mt-6 cursor-pointer hover:text-gray-400 transition-colors" onClick={()=>setView("home")}>Cancel</p>
-                    </div>
-                )}
-              </div>
-          </div>
+                     </>
+                 ) : (
+                     <div className="mb-8">
+                         <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Current Queue</p>
+                         <div className="text-5xl font-black text-white mb-2">{data?.people_ahead || 0}</div>
+                         <p className="text-sm text-gray-400">People Waiting</p>
+                         
+                         <button onClick={() => currentUser ? setView("join") : setView("login")} className="mt-6 w-full bg-green-500 text-black font-bold py-4 rounded-xl hover:bg-green-400 transition">
+                             {currentUser ? "Book a Slot" : "Login to Book"}
+                         </button>
+                     </div>
+                 )}
 
+                 {/* 5. QUEUE LIST (Next 5) */}
+                 <div className="mt-8 pt-8 border-t border-white/5 text-left">
+                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4 pl-2">Up Next</h3>
+                     <div className="space-y-2">
+                         {data?.queue.slice(0, 5).map((p:any, i:number) => (
+                             <div key={p.token} className={`p-3 rounded-xl flex justify-between items-center ${i===0 ? 'bg-green-500/10 border border-green-500/20' : 'bg-white/5 border border-white/5'}`}>
+                                 <div className="flex items-center gap-3">
+                                     <span className={`text-sm font-bold ${i===0 ? 'text-green-400' : 'text-gray-500'}`}>#{p.token}</span>
+                                     <span className="text-sm font-medium text-gray-200">{p.name}</span>
+                                 </div>
+                                 {i===0 && <span className="text-[10px] bg-green-500 text-black px-2 py-0.5 rounded font-bold">Serving</span>}
+                                 {i>0 && <span className="text-[10px] text-gray-500">~{formatTime(p.estimated_wait)}</span>}
+                             </div>
+                         ))}
+                         {data?.queue.length === 0 && <p className="text-center text-sm text-gray-600 italic py-4">Queue is empty</p>}
+                     </div>
+                 </div>
+             </div>
+         )}
+
+         {/* LOGIN / SIGNUP / JOIN VIEWS (Standard Forms) */}
+         {view === "login" && (
+            <div className="p-8">
+                <h2 className="text-2xl font-bold text-white mb-6">Login</h2>
+                <form onSubmit={handleLogin} className="space-y-4">
+                    <input className="w-full p-4 bg-black/40 border border-white/10 rounded-xl text-white outline-none" placeholder="Username" value={form.username} onChange={e => setForm({...form, username: e.target.value})} />
+                    <input type="password" className="w-full p-4 bg-black/40 border border-white/10 rounded-xl text-white outline-none" placeholder="Password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} />
+                    {error && <p className="text-red-500 text-xs">{error}</p>}
+                    <button disabled={loading} className="w-full bg-white text-black font-bold py-4 rounded-xl">{loading ? "..." : "Login"}</button>
+                    <p className="text-center text-sm text-gray-500 mt-4 cursor-pointer" onClick={()=>setView("signup")}>Create Account</p>
+                    <p className="text-center text-xs text-gray-600 mt-2 cursor-pointer" onClick={()=>setView("home")}>Back</p>
+                </form>
+            </div>
+         )}
+
+         {view === "signup" && (
+            <div className="p-8">
+                <h2 className="text-2xl font-bold text-white mb-6">Create Account</h2>
+                <form onSubmit={handleSignup} className="space-y-3">
+                    <input className="w-full p-3 bg-black/40 border border-white/10 rounded-xl text-white outline-none" placeholder="Full Name" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+                    <input className="w-full p-3 bg-black/40 border border-white/10 rounded-xl text-white outline-none" placeholder="Phone" maxLength={10} value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} />
+                    <input className="w-full p-3 bg-black/40 border border-white/10 rounded-xl text-white outline-none" placeholder="Username" value={form.username} onChange={e => setForm({...form, username: e.target.value})} />
+                    <input type="password" className="w-full p-3 bg-black/40 border border-white/10 rounded-xl text-white outline-none" placeholder="Password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} />
+                    {error && <p className="text-red-500 text-xs">{error}</p>}
+                    <button disabled={loading} className="w-full bg-green-500 text-black font-bold py-4 rounded-xl mt-2">{loading ? "..." : "Sign Up"}</button>
+                    <p className="text-center text-sm text-gray-500 mt-4 cursor-pointer" onClick={()=>setView("login")}>Back to Login</p>
+                </form>
+            </div>
+         )}
+
+         {view === "join" && (
+             <div className="p-8">
+                <h2 className="text-xl font-bold text-white mb-4">Select Services</h2>
+                <div className="grid grid-cols-2 gap-2 mb-6">
+                    {SERVICES.map(s => (
+                        <button key={s.name} onClick={() => toggleService(s.name)} className={`p-3 rounded-xl text-sm font-bold border transition-all ${selected.includes(s.name) ? 'bg-green-500 text-black border-green-500' : 'bg-white/5 text-gray-400 border-white/5'}`}>
+                            {s.name} <span className="block text-[10px] opacity-60 font-normal">{s.time}m</span>
+                        </button>
+                    ))}
+                </div>
+                <button onClick={handleJoin} disabled={loading} className="w-full bg-white text-black font-black py-4 rounded-xl hover:bg-gray-200">{loading ? "..." : "Confirm"}</button>
+                <p className="text-center text-xs text-gray-600 mt-4 cursor-pointer" onClick={()=>setView("home")}>Cancel</p>
+             </div>
+         )}
       </div>
     </main>
   );
