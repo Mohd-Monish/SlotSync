@@ -266,12 +266,12 @@ def get_salons():
     return salons
 
 # 👇 NEW: Run this ONCE to fill your empty database
-@app.post("/salons/seed")
+# 👇 CHANGE THIS LINE from @app.post to @app.get
+@app.get("/salons/seed") 
 def seed_salons():
     if db["salons"].count_documents({}) > 0:
         return {"message": "Database already has salons!"}
     
-    # The initial data
     mock_data = [
         { "id": "salon_101", "name": "Cool Cuts Mumbai", "location": "Bandra West, Mumbai", "wait_time": 15, "status": "Open", "image": "💈" },
         { "id": "salon_102", "name": "Delhi Style Studio", "location": "Connaught Place, Delhi", "wait_time": 45, "status": "Busy", "image": "✂️" },
