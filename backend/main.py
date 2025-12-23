@@ -9,17 +9,24 @@ from passlib.context import CryptContext
 
 app = FastAPI()
 
+# --- 1. CONFIGURATION ---
+# We allow Localhost (You) AND the Public Web (Vercel) to talk to this backend
+origins = [
+    "http://localhost:3000",       # Your Local Frontend
+    "http://127.0.0.1:3000",       # Your Local IP
+    "https://test.slotsync.in",    # Your Vercel Domain
+    "*"                            # Allow all (easiest for debugging)
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Standard Menu (In a real app, this would be stored in the 'salons' collection)
 MENU = { "Haircut": 20, "Shave": 10, "Head Massage": 15, "Hair Color": 45, "Facial": 30 }
-
 MONGO_URI = os.getenv("MONGO_URI") 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -27,10 +34,9 @@ try:
     client = MongoClient(MONGO_URI)
     db = client["slotsync_db"]
     queue_col = db["queue"]
-    history_col = db["history"]
     users_col = db["users"]
     admins_col = db["admins"]
-    config_col = db["config"] # Stores timer state per salon
+    config_col = db["config"]
     print("✅ Connected to MongoDB")
 except Exception as e:
     print(f"❌ DB Error: {e}")
@@ -39,7 +45,6 @@ except Exception as e:
 def get_password_hash(password): return pwd_context.hash(password)
 def verify_password(plain, hashed): return pwd_context.verify(plain, hashed)
 
-# Timer now needs to be specific to a SALON
 def get_service_start_time(salon_id):
     config = config_col.find_one({"_id": f"timer_{salon_id}"})
     if config and config.get("start_time"): return config["start_time"]
@@ -55,7 +60,6 @@ class UserSignup(BaseModel):
 class LoginRequest(BaseModel):
     username: str; password: str
 
-# 👇 NEW: Join Request now requires salon_id
 class JoinRequest(BaseModel):
     salon_id: str 
     name: str; phone: str; services: List[str]
@@ -65,7 +69,7 @@ class AddServiceRequest(BaseModel):
 
 class ActionRequest(BaseModel):
     token: int
-    salon_id: Optional[str] = None # Optional for legacy support, but good to have
+    salon_id: Optional[str] = None 
 
 class EditRequest(BaseModel):
     token: int; services: List[str]
@@ -75,10 +79,8 @@ class MoveRequest(BaseModel):
 
 # --- ROUTES ---
 
-# 👇 UPDATED: Accepts ?salon_id=salon_101
 @app.get("/queue/status")
 def get_status(salon_id: str):
-    # Filter queue by Salon ID
     queue_list = list(queue_col.find({"salon_id": salon_id}).sort("order_index", 1))
     
     start_time = get_service_start_time(salon_id)
@@ -122,10 +124,8 @@ def user_login(req: LoginRequest):
     if not user or not verify_password(req.password, user['password']): raise HTTPException(401, "Invalid")
     return {"message": "Success", "name": user['name'], "phone": user['phone']}
 
-# --- ADMIN ROUTES ---
 @app.post("/admin/create")
 def create_admin(req: LoginRequest):
-    # In a real app, we would assign a salon_id here
     if admins_col.count_documents({}) > 0: raise HTTPException(403, "Admin exists")
     admins_col.insert_one({"username": req.username, "password": get_password_hash(req.password)})
     return {"message": "Admin created"}
@@ -140,18 +140,13 @@ def admin_login(req: LoginRequest):
 
 @app.post("/queue/join")
 def join_queue(req: JoinRequest):
-    # Check if THIS salon is empty
     if queue_col.count_documents({"salon_id": req.salon_id}) == 0: 
         set_service_start_time(req.salon_id, datetime.now())
     
-    # Get last token (Global is fine, or per salon. Let's keep global token for simplicity now)
     last_q = queue_col.find_one(sort=[("token", -1)])
-    last_h = history_col.find_one(sort=[("token", -1)])
     t1 = last_q["token"] if last_q else 99
-    t2 = last_h["token"] if last_h else 99
-    new_token = max(t1, t2) + 1
+    new_token = t1 + 1
     
-    # Order Index specific to THIS salon
     last_item = queue_col.find_one({"salon_id": req.salon_id}, sort=[("order_index", -1)])
     new_order = (last_item["order_index"] + 1) if last_item else 1
     
@@ -159,7 +154,7 @@ def join_queue(req: JoinRequest):
     
     queue_col.insert_one({
         "token": new_token, 
-        "salon_id": req.salon_id,  # 👈 Saving the Salon ID
+        "salon_id": req.salon_id,
         "name": req.name, "phone": req.phone, 
         "services": list(set(req.services)), "total_duration": dur, 
         "order_index": new_order, "joined_at_str": datetime.now().strftime("%I:%M %p")
@@ -184,32 +179,23 @@ def add_service(req: AddServiceRequest):
 def cancel_booking(req: ActionRequest):
     user = queue_col.find_one({"token": req.token})
     if not user: return {"message": "Not found"}
-    salon_id = user.get("salon_id", "salon_101") # Default fallback
+    salon_id = user.get("salon_id", "salon_101")
 
-    # If first person in that salon cancels
     first_person = queue_col.find_one({"salon_id": salon_id}, sort=[("order_index", 1)])
     if first_person and first_person["token"] == req.token:
         set_service_start_time(salon_id, datetime.now()) 
 
     queue_col.delete_one({"token": req.token})
-    
-    # If empty
     if queue_col.count_documents({"salon_id": salon_id}) == 0: 
         set_service_start_time(salon_id, None)
-        
     return {"message": "Cancelled"}
-
-# NOTE: Admin actions below currently work on token (globally unique). 
-# In a full v2, we would require Admin to send salon_id to verify ownership.
 
 @app.post("/queue/next")
 def next_customer(req: ActionRequest = None): 
-    # For now, we find the salon from the first person in queue (simplification)
-    # Ideally, Admin sends their salon_id
+    # Try to find salon from request, or find ANY active salon
     if req and req.salon_id:
         salon_id = req.salon_id
     else:
-        # Fallback: Find ANY salon with a queue (Development only)
         any_user = queue_col.find_one()
         if not any_user: return {"message": "Empty"}
         salon_id = any_user["salon_id"]
@@ -217,7 +203,6 @@ def next_customer(req: ActionRequest = None):
     first = queue_col.find_one({"salon_id": salon_id}, sort=[("order_index", 1)])
     if not first: return {"message": "Empty"}
     
-    history_col.insert_one(first)
     queue_col.delete_one({"_id": first["_id"]})
     
     if queue_col.count_documents({"salon_id": salon_id}) > 0: 
@@ -233,7 +218,6 @@ def move_customer(req: MoveRequest):
     salon_id = p.get("salon_id")
 
     curr = p["order_index"]
-    # Ensure we only swap with neighbors in the SAME salon
     if req.direction == "up":
         target = queue_col.find_one({"salon_id": salon_id, "order_index": {"$lt": curr}}, sort=[("order_index", -1)])
     else:
@@ -252,15 +236,12 @@ def edit_customer(req: EditRequest):
 
 @app.post("/queue/delete")
 def delete_customer(req: ActionRequest):
-    # This is Admin deleting a user
     queue_col.delete_one({"token": req.token})
     return {"message": "Deleted"}
 
 @app.post("/queue/reset")
-def reset(req: ActionRequest = None): # Require salon_id in future
-    # DANGER: For now, clears EVERYTHING. In future, filter by salon_id
+def reset(req: ActionRequest = None):
     queue_col.delete_many({})
-    history_col.delete_many({})
     config_col.delete_many({})
     return {"message": "Reset"}
 

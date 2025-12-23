@@ -13,13 +13,15 @@ const SERVICES = [
     { name: "Hair Color", time: 45 }
 ];
 
-export default function SalonHome() {
-  const params = useParams(); 
-  const router = useRouter(); 
-  const salonId = params.id; 
+export default function SalonBooking() {
+  const params = useParams(); // Get Salon ID
+  const router = useRouter(); // For Back Button
+  const salonId = params.id;
 
   const [data, setData] = useState<any>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  
+  // UI State
   const [view, setView] = useState("home"); 
   const [form, setForm] = useState({ username: "", password: "", name: "", phone: "" });
   const [selected, setSelected] = useState<string[]>([]);
@@ -40,11 +42,10 @@ export default function SalonHome() {
     }, 1000);
 
     return () => { clearInterval(poller); clearInterval(timer); };
-  }, [salonId]);
+  }, [salonId]); 
 
   const fetchStatus = async () => {
     try {
-      // Send the salon_id to the backend
       const res = await fetch(`${API_URL}/queue/status?salon_id=${salonId}`);
       const json = await res.json();
       setData(json);
@@ -54,8 +55,10 @@ export default function SalonHome() {
   useEffect(() => {
       if (data && currentUser) {
           const myItem = data.queue.find((p:any) => p.phone === currentUser.phone);
-          if (myItem && Math.abs(myItem.estimated_wait - displayTime) > 2) {
-              setDisplayTime(myItem.estimated_wait);
+          if (myItem) {
+              if (Math.abs(myItem.estimated_wait - displayTime) > 2) {
+                  setDisplayTime(myItem.estimated_wait);
+              }
           }
       }
   }, [data, currentUser]);
@@ -98,7 +101,7 @@ export default function SalonHome() {
     await fetch(`${API_URL}/queue/join`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-            salon_id: salonId, // IMPORTANT: Sending the ID
+            salon_id: salonId,
             name: currentUser.name, 
             phone: currentUser.phone, 
             services: selected 
@@ -112,7 +115,6 @@ export default function SalonHome() {
       setLoading(true);
       const myItem = data?.queue.find((p:any) => p.phone === currentUser?.phone);
       if(!myItem) return;
-
       await fetch(`${API_URL}/queue/add-service`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ token: myItem.token, new_services: selected }),
@@ -141,35 +143,37 @@ export default function SalonHome() {
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
-  // --- UI HELPERS ---
+  // --- DERIVED STATE ---
   const myQueueItem = data?.queue.find((p:any) => p.phone === currentUser?.phone);
   const amIInQueue = !!myQueueItem;
   const myIndex = data?.queue.findIndex((p:any) => p.phone === currentUser?.phone);
   const peopleAhead = myIndex > 0 ? myIndex : 0;
   const isServingNow = amIInQueue && myIndex === 0;
 
-  // --- RENDER ---
+  if (!data) return (
+      <div className="fixed inset-0 bg-black z-50 flex items-center justify-center">
+          <p className="text-green-500 font-mono animate-pulse">CONNECTING TO RENDER...</p>
+      </div>
+  );
+
   return (
     <main className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-black to-black flex items-center justify-center p-4 md:p-8 font-sans text-gray-200">
+      
       <div className="w-full max-w-md bg-neutral-900/50 backdrop-blur-xl border border-white/10 rounded-[2rem] shadow-2xl relative overflow-hidden">
          
-         {/* HEADER - With Back Button */}
          <div className="flex justify-between items-center p-6 border-b border-white/5">
             <div className="flex items-center gap-3">
-                <button onClick={() => router.push('/')} className="text-gray-400 hover:text-white transition">←</button>
-                <div>
-                    <h1 className="text-lg font-bold text-white leading-none">Cool Cuts Mumbai</h1>
-                    <p className="text-[10px] text-green-400 uppercase tracking-widest mt-1">Live Queue</p>
-                </div>
+                <button onClick={() => router.push('/')} className="w-8 h-8 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 transition text-gray-400 hover:text-white">←</button>
+                <h1 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-600">SlotSync</h1>
             </div>
             {currentUser ? (
                 <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">{currentUser.name}</span>
                     <button onClick={() => { localStorage.removeItem('slotSync_user'); setCurrentUser(null); }} className="text-[10px] text-red-400 border border-red-500/20 px-2 py-1 rounded-full">Logout</button>
                 </div>
             ) : <button onClick={() => setView("login")} className="text-sm text-green-400 font-bold">Login</button>}
          </div>
 
-         {/* (Rest of the standard UI - same as before) */}
          {view === "home" && (
              <div className="p-8 text-center">
                  {amIInQueue ? (
@@ -219,7 +223,6 @@ export default function SalonHome() {
                          </button>
                      </div>
                  )}
-                 {/* UP NEXT LIST */}
                  <div className="mt-8 pt-8 border-t border-white/5 text-left">
                      <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4 pl-2">Up Next</h3>
                      <div className="space-y-2">
@@ -238,7 +241,25 @@ export default function SalonHome() {
                  </div>
              </div>
          )}
-         
+
+         {/* SERVICE MODAL & LOGIN/SIGNUP FORMS (Standard) */}
+         {/* ... (Use previous forms for Login/Signup/AddService here) ... */}
+         {/* For brevity, these are standard. Copy from previous code if needed. */}
+         {view === "join" && (
+             <div className="p-8">
+                <h2 className="text-xl font-bold text-white mb-4">Select Services</h2>
+                <div className="grid grid-cols-2 gap-2 mb-6">
+                    {SERVICES.map(s => (
+                        <button key={s.name} onClick={() => toggleService(s.name)} className={`p-3 rounded-xl text-sm font-bold border transition-all ${selected.includes(s.name) ? 'bg-green-500 text-black border-green-500' : 'bg-white/5 text-gray-400 border-white/5'}`}>
+                            {s.name} <span className="block text-[10px] opacity-60 font-normal">{s.time}m</span>
+                        </button>
+                    ))}
+                </div>
+                <button onClick={handleJoin} disabled={loading} className="w-full bg-white text-black font-black py-4 rounded-xl hover:bg-gray-200">{loading ? "..." : "Confirm"}</button>
+                <p className="text-center text-xs text-gray-600 mt-4 cursor-pointer" onClick={()=>setView("home")}>Cancel</p>
+             </div>
+         )}
+
          {view === "login" && (
             <div className="p-8">
                 <h2 className="text-2xl font-bold text-white mb-6">Login</h2>
@@ -267,22 +288,8 @@ export default function SalonHome() {
                 </form>
             </div>
          )}
-
-         {view === "join" && (
-             <div className="p-8">
-                <h2 className="text-xl font-bold text-white mb-4">Select Services</h2>
-                <div className="grid grid-cols-2 gap-2 mb-6">
-                    {SERVICES.map(s => (
-                        <button key={s.name} onClick={() => toggleService(s.name)} className={`p-3 rounded-xl text-sm font-bold border transition-all ${selected.includes(s.name) ? 'bg-green-500 text-black border-green-500' : 'bg-white/5 text-gray-400 border-white/5'}`}>
-                            {s.name} <span className="block text-[10px] opacity-60 font-normal">{s.time}m</span>
-                        </button>
-                    ))}
-                </div>
-                <button onClick={handleJoin} disabled={loading} className="w-full bg-white text-black font-black py-4 rounded-xl hover:bg-gray-200">{loading ? "..." : "Confirm"}</button>
-                <p className="text-center text-xs text-gray-600 mt-4 cursor-pointer" onClick={()=>setView("home")}>Cancel</p>
-             </div>
-         )}
-
+         
+         {/* ADD SERVICE MODAL */}
          {showAddService && (
              <div className="absolute inset-0 bg-black/90 z-50 p-8 animate-in slide-in-from-bottom duration-300 flex flex-col justify-center">
                 <h2 className="text-xl font-bold text-white mb-4 text-center">Add More Services</h2>
