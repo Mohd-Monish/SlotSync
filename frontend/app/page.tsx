@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation'; // 👈 Added for routing
+import { useParams, useRouter } from 'next/navigation';
 
 // 👇 YOUR RENDER LINK
 const API_URL = "https://myspotnow-api.onrender.com"; 
@@ -13,23 +13,19 @@ const SERVICES = [
     { name: "Hair Color", time: 45 }
 ];
 
-export default function SalonBooking() {
-  const params = useParams(); // 👈 Get Salon ID
-  const router = useRouter(); // 👈 For Back Button
-  const salonId = params.id;
+export default function SalonHome() {
+  const params = useParams(); 
+  const router = useRouter(); 
+  const salonId = params.id; 
 
   const [data, setData] = useState<any>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
-  
-  // UI State
   const [view, setView] = useState("home"); 
   const [form, setForm] = useState({ username: "", password: "", name: "", phone: "" });
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showAddService, setShowAddService] = useState(false);
-  
-  // Local Timer State (For smooth countdown)
   const [displayTime, setDisplayTime] = useState(0);
 
   // --- SYNC ---
@@ -38,34 +34,28 @@ export default function SalonBooking() {
     if (savedUser) setCurrentUser(JSON.parse(savedUser));
     
     fetchStatus();
-    // Poll server every 3 seconds to sync up
     const poller = setInterval(fetchStatus, 3000);
-    
-    // Local countdown every 1 second
     const timer = setInterval(() => {
         setDisplayTime(prev => (prev > 0 ? prev - 1 : 0));
     }, 1000);
 
     return () => { clearInterval(poller); clearInterval(timer); };
-  }, [salonId]); // 👈 Refresh when ID changes
+  }, [salonId]);
 
   const fetchStatus = async () => {
     try {
-      // 👇 NEW: Sending salon_id
+      // Send the salon_id to the backend
       const res = await fetch(`${API_URL}/queue/status?salon_id=${salonId}`);
       const json = await res.json();
       setData(json);
     } catch (e) { console.error("API Error"); }
   };
 
-  // Update local timer when server data changes
   useEffect(() => {
       if (data && currentUser) {
           const myItem = data.queue.find((p:any) => p.phone === currentUser.phone);
-          if (myItem) {
-              if (Math.abs(myItem.estimated_wait - displayTime) > 2) {
-                  setDisplayTime(myItem.estimated_wait);
-              }
+          if (myItem && Math.abs(myItem.estimated_wait - displayTime) > 2) {
+              setDisplayTime(myItem.estimated_wait);
           }
       }
   }, [data, currentUser]);
@@ -107,9 +97,8 @@ export default function SalonBooking() {
     setLoading(true);
     await fetch(`${API_URL}/queue/join`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        // 👇 NEW: Sending salon_id in body
         body: JSON.stringify({ 
-            salon_id: salonId,
+            salon_id: salonId, // IMPORTANT: Sending the ID
             name: currentUser.name, 
             phone: currentUser.phone, 
             services: selected 
@@ -121,7 +110,6 @@ export default function SalonBooking() {
   const handleAddServices = async () => {
       if (selected.length === 0) return alert("Select at least one service");
       setLoading(true);
-      
       const myItem = data?.queue.find((p:any) => p.phone === currentUser?.phone);
       if(!myItem) return;
 
@@ -147,41 +135,41 @@ export default function SalonBooking() {
     else setSelected([...selected, svc]);
   };
 
-  // Safe time formatting (Fixes NaN issue)
   const formatTime = (s: any) => {
     if (typeof s !== 'number' || isNaN(s)) return "0:00"; 
     const mins = Math.floor(s / 60); const secs = s % 60;
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
-  // --- DERIVED STATE ---
+  // --- UI HELPERS ---
   const myQueueItem = data?.queue.find((p:any) => p.phone === currentUser?.phone);
   const amIInQueue = !!myQueueItem;
   const myIndex = data?.queue.findIndex((p:any) => p.phone === currentUser?.phone);
   const peopleAhead = myIndex > 0 ? myIndex : 0;
   const isServingNow = amIInQueue && myIndex === 0;
 
+  // --- RENDER ---
   return (
     <main className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-black to-black flex items-center justify-center p-4 md:p-8 font-sans text-gray-200">
-      
       <div className="w-full max-w-md bg-neutral-900/50 backdrop-blur-xl border border-white/10 rounded-[2rem] shadow-2xl relative overflow-hidden">
          
-         {/* HEADER */}
+         {/* HEADER - With Back Button */}
          <div className="flex justify-between items-center p-6 border-b border-white/5">
             <div className="flex items-center gap-3">
-                {/* 👇 Back Button added gracefully */}
-                <button onClick={() => router.push('/')} className="w-8 h-8 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 transition text-gray-400 hover:text-white">←</button>
-                <h1 className="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-600">SlotSync</h1>
+                <button onClick={() => router.push('/')} className="text-gray-400 hover:text-white transition">←</button>
+                <div>
+                    <h1 className="text-lg font-bold text-white leading-none">Cool Cuts Mumbai</h1>
+                    <p className="text-[10px] text-green-400 uppercase tracking-widest mt-1">Live Queue</p>
+                </div>
             </div>
-            
             {currentUser ? (
                 <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-400">{currentUser.name}</span>
                     <button onClick={() => { localStorage.removeItem('slotSync_user'); setCurrentUser(null); }} className="text-[10px] text-red-400 border border-red-500/20 px-2 py-1 rounded-full">Logout</button>
                 </div>
             ) : <button onClick={() => setView("login")} className="text-sm text-green-400 font-bold">Login</button>}
          </div>
 
+         {/* (Rest of the standard UI - same as before) */}
          {view === "home" && (
              <div className="p-8 text-center">
                  {amIInQueue ? (
@@ -195,7 +183,6 @@ export default function SalonBooking() {
                         ) : (
                             <div className="mb-8">
                                 <p className="text-xs font-bold text-green-400 uppercase tracking-widest mb-2">Your Wait Time</p>
-                                {/* USES LOCAL DISPLAY TIME FOR SMOOTHNESS */}
                                 <div className="text-7xl font-mono font-bold text-white tracking-tighter drop-shadow-[0_0_20px_rgba(34,197,94,0.3)]">
                                     {formatTime(displayTime)}
                                 </div>
@@ -211,12 +198,10 @@ export default function SalonBooking() {
                                 </div>
                             </div>
                         )}
-                        
                         <div className="flex gap-2 justify-center mt-6">
                              <button onClick={() => setShowAddService(true)} className="px-4 py-2 bg-blue-600/20 text-blue-400 text-sm font-bold rounded-lg hover:bg-blue-600 hover:text-white transition">
                                  + Add Services
                              </button>
-                             {/* HIDE CANCEL BUTTON IF SERVING */}
                              {!isServingNow && (
                                 <button onClick={() => handleCancel(myQueueItem.token)} disabled={loading} className="px-4 py-2 bg-red-600/20 text-red-400 text-sm font-bold rounded-lg hover:bg-red-600 hover:text-white transition">
                                     Cancel
@@ -234,7 +219,7 @@ export default function SalonBooking() {
                          </button>
                      </div>
                  )}
-
+                 {/* UP NEXT LIST */}
                  <div className="mt-8 pt-8 border-t border-white/5 text-left">
                      <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4 pl-2">Up Next</h3>
                      <div className="space-y-2">
@@ -253,43 +238,7 @@ export default function SalonBooking() {
                  </div>
              </div>
          )}
-
-         {/* ADD SERVICE MODAL (With Disabled Duplicates) */}
-         {showAddService && (
-             <div className="absolute inset-0 bg-black/90 z-50 p-8 animate-in slide-in-from-bottom duration-300">
-                <h2 className="text-xl font-bold text-white mb-4">Add More Services</h2>
-                <div className="grid grid-cols-2 gap-2 mb-6">
-                    {SERVICES.map(s => {
-                        const alreadyHas = myQueueItem?.services.includes(s.name);
-                        return (
-                            <button 
-                                key={s.name} 
-                                onClick={() => !alreadyHas && toggleService(s.name)} 
-                                disabled={alreadyHas}
-                                className={`p-3 rounded-xl text-sm font-bold border transition-all 
-                                    ${alreadyHas 
-                                        ? 'bg-neutral-800 text-gray-600 border-transparent cursor-not-allowed opacity-50' 
-                                        : selected.includes(s.name) 
-                                            ? 'bg-blue-500 text-white border-blue-500' 
-                                            : 'bg-white/5 text-gray-400 border-white/5'
-                                    }`}
-                            >
-                                {s.name} 
-                                <span className="block text-[10px] opacity-60 font-normal">
-                                    {alreadyHas ? "Added" : `${s.time}m`}
-                                </span>
-                            </button>
-                        );
-                    })}
-                </div>
-                <div className="flex gap-2">
-                    <button onClick={handleAddServices} disabled={loading} className="flex-1 bg-blue-500 text-white font-bold py-3 rounded-xl hover:bg-blue-400">Update</button>
-                    <button onClick={() => { setShowAddService(false); setSelected([]); }} className="flex-1 bg-neutral-800 text-white font-bold py-3 rounded-xl">Cancel</button>
-                </div>
-             </div>
-         )}
-
-         {/* LOGIN / SIGNUP / JOIN VIEWS */}
+         
          {view === "login" && (
             <div className="p-8">
                 <h2 className="text-2xl font-bold text-white mb-6">Login</h2>
@@ -331,6 +280,26 @@ export default function SalonBooking() {
                 </div>
                 <button onClick={handleJoin} disabled={loading} className="w-full bg-white text-black font-black py-4 rounded-xl hover:bg-gray-200">{loading ? "..." : "Confirm"}</button>
                 <p className="text-center text-xs text-gray-600 mt-4 cursor-pointer" onClick={()=>setView("home")}>Cancel</p>
+             </div>
+         )}
+
+         {showAddService && (
+             <div className="absolute inset-0 bg-black/90 z-50 p-8 animate-in slide-in-from-bottom duration-300 flex flex-col justify-center">
+                <h2 className="text-xl font-bold text-white mb-4 text-center">Add More Services</h2>
+                <div className="grid grid-cols-2 gap-2 mb-6">
+                    {SERVICES.map(s => {
+                        const alreadyHas = myQueueItem?.services.includes(s.name);
+                        return (
+                            <button key={s.name} onClick={() => !alreadyHas && toggleService(s.name)} disabled={alreadyHas} className={`p-3 rounded-xl text-sm font-bold border transition-all ${alreadyHas ? 'bg-neutral-800 text-gray-600 border-transparent cursor-not-allowed opacity-50' : selected.includes(s.name) ? 'bg-blue-500 text-white border-blue-500' : 'bg-white/5 text-gray-400 border-white/5'}`}>
+                                {s.name} <span className="block text-[10px] opacity-60 font-normal">{alreadyHas ? "Added" : `${s.time}m`}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+                <div className="flex gap-2">
+                    <button onClick={handleAddServices} disabled={loading} className="flex-1 bg-blue-500 text-white font-bold py-3 rounded-xl hover:bg-blue-400">Update</button>
+                    <button onClick={() => { setShowAddService(false); setSelected([]); }} className="flex-1 bg-neutral-800 text-white font-bold py-3 rounded-xl">Cancel</button>
+                </div>
              </div>
          )}
       </div>
