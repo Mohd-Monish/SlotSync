@@ -1,24 +1,21 @@
 "use client";
 import { useState, useEffect } from 'react';
 
-// 👇 YOUR RENDER LINK (Backend is still live)
+// 👇 YOUR RENDER LINK
 const API_URL = "https://myspotnow-api.onrender.com"; 
-
-const ALL_SERVICES = [
-  { name: "Haircut", time: 20 }, { name: "Shave", time: 10 },
-  { name: "Head Massage", time: 15 }, { name: "Facial", time: 30 },
-  { name: "Hair Color", time: 45 },
-];
 
 export default function Admin() {
   const [data, setData] = useState<any>(null);
+  const [salonDetails, setSalonDetails] = useState<any>(null); // 👈 NEW: Store Salon Info
+  const [menu, setMenu] = useState<any[]>([]); // 👈 NEW: Dynamic Menu
+  
   const [timeLeft, setTimeLeft] = useState(0);
   const [isLocked, setIsLocked] = useState(true);
   
   // Login State
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [salonId, setSalonId] = useState("salon_101"); // Default ID
+  const [salonId, setSalonId] = useState("salon_101"); 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   
@@ -36,6 +33,7 @@ export default function Admin() {
         });
         if (res.ok) { 
             setIsLocked(false); 
+            fetchSalonDetails(); // 👈 Fetch Menu on Login
             refresh(); 
         } 
         else { setError("Invalid Credentials"); }
@@ -43,7 +41,19 @@ export default function Admin() {
     setLoading(false);
   };
 
-  // --- SYNC ---
+  // --- FETCH DYNAMIC MENU ---
+  const fetchSalonDetails = async () => {
+      try {
+          const res = await fetch(`${API_URL}/salons/${salonId}`);
+          if (res.ok) {
+              const json = await res.json();
+              setSalonDetails(json);
+              setMenu(json.menu || []); // 👈 Load Real Menu
+          }
+      } catch (e) { console.error("Failed to load salon details"); }
+  };
+
+  // --- SYNC QUEUE ---
   useEffect(() => {
     if(isLocked) return;
     refresh();
@@ -54,7 +64,6 @@ export default function Admin() {
 
   const refresh = async () => {
     try {
-        // Send salon_id to get THAT specific queue
         const res = await fetch(`${API_URL}/queue/status?salon_id=${salonId}`);
         const json = await res.json();
         setData((prev: any) => {
@@ -67,7 +76,6 @@ export default function Admin() {
 
   // --- API ACTIONS ---
   const apiCall = async (endpoint: string, body: any) => {
-      // Always attach salon_id so backend knows which queue to update
       const payload = { ...body, salon_id: salonId };
       await fetch(`${API_URL}/queue/${endpoint}`, { 
           method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload) 
@@ -128,7 +136,9 @@ export default function Admin() {
           <div className="flex justify-between items-center mb-8">
               <div>
                   <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-                  <p className="text-sm text-green-400 font-mono mt-1">Managing: {salonId}</p>
+                  <p className="text-sm text-green-400 font-mono mt-1">
+                      {salonDetails ? salonDetails.name : `ID: ${salonId}`}
+                  </p>
               </div>
               <button onClick={() => setIsLocked(true)} className="text-xs text-red-400 border border-red-500/20 px-4 py-2 rounded-full hover:bg-red-500/10 transition">Logout</button>
           </div>
@@ -182,18 +192,21 @@ export default function Admin() {
           </div>
       </div>
 
-      {/* EDIT MODAL */}
+      {/* DYNAMIC EDIT MODAL */}
       {editingUser && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <div className="bg-neutral-900 border border-white/10 p-6 rounded-3xl w-full max-w-sm shadow-2xl">
                   <h3 className="text-xl font-bold mb-1 text-white">Edit Services</h3>
                   <div className="space-y-2 mb-8">
-                      {ALL_SERVICES.map(svc => (
+                      {/* 👇 THIS NOW USES THE REAL MENU FROM DATABASE */}
+                      {menu.length > 0 ? menu.map(svc => (
                           <div key={svc.name} onClick={() => toggleEditService(svc.name)} className={`p-3 rounded-xl border cursor-pointer flex justify-between items-center transition-all duration-200 ${editServices.includes(svc.name) ? 'bg-blue-600 border-blue-500 text-white' : 'bg-neutral-800 border-white/5 text-gray-400'}`}>
                               <span className="font-medium">{svc.name}</span>
                               <span className="text-xs opacity-60 bg-black/20 px-2 py-1 rounded">{svc.time}m</span>
                           </div>
-                      ))}
+                      )) : (
+                        <p className="text-gray-500 text-sm">Loading services...</p>
+                      )}
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <button onClick={() => setEditingUser(null)} className="py-3 bg-neutral-800 hover:bg-neutral-700 text-white font-bold rounded-xl">Cancel</button>
