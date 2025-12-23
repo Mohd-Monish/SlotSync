@@ -279,3 +279,58 @@ def seed_salons():
     ]
     db["salons"].insert_many(mock_data)
     return {"message": "Success! Added 3 salons."}
+
+# --- ADDITIONAL ROUTES FOR SALONS WITH MENUS ---
+# 👇 UPDATE: Update the Seed function with unique menus
+@app.get("/salons/seed") 
+def seed_salons():
+    db["salons"].delete_many({}) # Clear old data first to avoid duplicates
+    
+    mock_data = [
+        { 
+            "id": "salon_101", 
+            "name": "Cool Cuts Mumbai", 
+            "location": "Bandra West, Mumbai", 
+            "status": "Open", 
+            "image": "💈",
+            "menu": [
+                {"name": "Haircut", "time": 20, "price": 200},
+                {"name": "Shave", "time": 10, "price": 100},
+                {"name": "Head Massage", "time": 15, "price": 150}
+            ]
+        },
+        { 
+            "id": "salon_102", 
+            "name": "Delhi Style Studio", 
+            "location": "Connaught Place, Delhi", 
+            "status": "Busy", 
+            "image": "✂️",
+            "menu": [
+                {"name": "Premium Haircut", "time": 45, "price": 500},
+                {"name": "Beard Styling", "time": 20, "price": 250},
+                {"name": "Hair Color", "time": 60, "price": 1200},
+                {"name": "Facial", "time": 30, "price": 800}
+            ]
+        },
+        { 
+            "id": "salon_103", 
+            "name": "Bangalore Buzz", 
+            "location": "Indiranagar, Bangalore", 
+            "status": "Open", 
+            "image": "💇‍♂️",
+            "menu": [
+                {"name": "Quick Trim", "time": 10, "price": 150},
+                {"name": "Full Service", "time": 40, "price": 600}
+            ]
+        },
+    ]
+    db["salons"].insert_many(mock_data)
+    return {"message": "Database updated with Dynamic Menus!"}
+
+# 👇 NEW: Get details for ONE specific salon
+@app.get("/salons/{salon_id}")
+def get_salon_details(salon_id: str):
+    salon = db["salons"].find_one({"id": salon_id}, {"_id": 0})
+    if not salon:
+        raise HTTPException(404, "Salon not found")
+    return salon
