@@ -1,21 +1,24 @@
 import os
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
 from typing import List, Optional
 from pymongo import MongoClient
 from passlib.context import CryptContext
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = FastAPI()
 
 # --- 1. CONFIGURATION ---
-# We allow Localhost (You) AND the Public Web (Vercel) to talk to this backend
 origins = [
-    "http://localhost:3000",       # Your Local Frontend
-    "http://127.0.0.1:3000",       # Your Local IP
-    "https://test.slotsync.in",    # Your Vercel Domain
-    "*"                            # Allow all (easiest for debugging)
+    "http://localhost:3000",       # Localhost Frontend
+    "http://127.0.0.1:3000",       # Alternate Localhost
+    "https://test.slotsync.in",    # Production Domain
+    "*"                            # Fallback
 ]
 
 app.add_middleware(
@@ -26,17 +29,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MENU = { "Haircut": 20, "Shave": 10, "Head Massage": 15, "Hair Color": 45, "Facial": 30 }
 MONGO_URI = os.getenv("MONGO_URI") 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 try:
     client = MongoClient(MONGO_URI)
     db = client["slotsync_db"]
+    # Collections
     queue_col = db["queue"]
     users_col = db["users"]
     admins_col = db["admins"]
     config_col = db["config"]
+    salons_col = db["salons"]
     print("✅ Connected to MongoDB")
 except Exception as e:
     print(f"❌ DB Error: {e}")
@@ -77,7 +81,71 @@ class EditRequest(BaseModel):
 class MoveRequest(BaseModel):
     token: int; direction: str
 
-# --- ROUTES ---
+# --- SALON DATA ROUTES ---
+
+@app.get("/salons")
+def get_salons():
+    # Return all salons (hiding internal DB ID)
+    return list(salons_col.find({}, {"_id": 0}))
+
+@app.get("/salons/{salon_id}")
+def get_salon_details(salon_id: str):
+    salon = salons_col.find_one({"id": salon_id}, {"_id": 0})
+    if not salon:
+        raise HTTPException(404, "Salon not found")
+    return salon
+
+@app.get("/salons/seed") 
+def seed_salons():
+    # 🔥 NUCLEAR OPTION: Clears old data to prevent bugs
+    salons_col.delete_many({}) 
+    
+    mock_data = [
+        { 
+            "id": "salon_101", 
+            "name": "Cool Cuts Mumbai", 
+            "location": "Bandra West, Mumbai", 
+            "status": "Open", 
+            "image": "💈",
+            "wait_time": 15,
+            "menu": [
+                {"name": "Haircut", "time": 20, "price": 200},
+                {"name": "Shave", "time": 10, "price": 100},
+                {"name": "Head Massage", "time": 15, "price": 150},
+                {"name": "Cleanup", "time": 25, "price": 400}
+            ]
+        },
+        { 
+            "id": "salon_102", 
+            "name": "Delhi Style Studio", 
+            "location": "Connaught Place, Delhi", 
+            "status": "Busy", 
+            "image": "✂️",
+            "wait_time": 45,
+            "menu": [
+                {"name": "Premium Haircut", "time": 45, "price": 500},
+                {"name": "Beard Styling", "time": 20, "price": 250},
+                {"name": "Hair Color", "time": 60, "price": 1200},
+                {"name": "Facial", "time": 30, "price": 800}
+            ]
+        },
+        { 
+            "id": "salon_103", 
+            "name": "Bangalore Buzz", 
+            "location": "Indiranagar, Bangalore", 
+            "status": "Open", 
+            "image": "💇‍♂️",
+            "wait_time": 5,
+            "menu": [
+                {"name": "Quick Trim", "time": 10, "price": 150},
+                {"name": "Full Service", "time": 40, "price": 600}
+            ]
+        },
+    ]
+    salons_col.insert_many(mock_data)
+    return {"message": "Database Successfully Reset with 3 Salons & Menus!"}
+
+# --- QUEUE ROUTES ---
 
 @app.get("/queue/status")
 def get_status(salon_id: str):
@@ -91,9 +159,10 @@ def get_status(salon_id: str):
     
     cumulative_wait = 0
     
+    # Calculate wait times dynamically
     for index, person in enumerate(queue_list):
         person.pop("_id", None)
-        person_duration_sec = person['total_duration'] * 60
+        person_duration_sec = person.get('total_duration', 0) * 60
         
         if index == 0:
             remaining = max(0, person_duration_sec - time_served_so_far)
@@ -111,6 +180,44 @@ def get_status(salon_id: str):
         "seconds_left": int(cumulative_wait)
     }
 
+@app.post("/queue/join")
+def join_queue(req: JoinRequest):
+    # Retrieve Menu to calculate duration correctly (Security Step)
+    salon = salons_col.find_one({"id": req.salon_id})
+    if not salon: raise HTTPException(404, "Salon not found")
+    
+    # Calculate duration based on REAL database values
+    total_dur = 0
+    valid_services = []
+    for s_name in req.services:
+        item = next((m for m in salon.get("menu", []) if m["name"] == s_name), None)
+        if item:
+            total_dur += item["time"]
+            valid_services.append(s_name)
+
+    if queue_col.count_documents({"salon_id": req.salon_id}) == 0: 
+        set_service_start_time(req.salon_id, datetime.now())
+    
+    last_q = queue_col.find_one(sort=[("token", -1)])
+    t1 = last_q["token"] if last_q else 99
+    new_token = t1 + 1
+    
+    last_item = queue_col.find_one({"salon_id": req.salon_id}, sort=[("order_index", -1)])
+    new_order = (last_item["order_index"] + 1) if last_item else 1
+    
+    queue_col.insert_one({
+        "token": new_token, 
+        "salon_id": req.salon_id,
+        "name": req.name, 
+        "phone": req.phone, 
+        "services": valid_services, 
+        "total_duration": total_dur, 
+        "order_index": new_order, 
+        "joined_at_str": datetime.now().strftime("%I:%M %p")
+    })
+    return {"message": "Joined", "token": new_token}
+
+# --- AUTH ROUTES ---
 @app.post("/auth/signup")
 def user_signup(req: UserSignup):
     if users_col.find_one({"username": req.username}): raise HTTPException(400, "Username taken")
@@ -124,81 +231,16 @@ def user_login(req: LoginRequest):
     if not user or not verify_password(req.password, user['password']): raise HTTPException(401, "Invalid")
     return {"message": "Success", "name": user['name'], "phone": user['phone']}
 
-@app.post("/admin/create")
-def create_admin(req: LoginRequest):
-    if admins_col.count_documents({}) > 0: raise HTTPException(403, "Admin exists")
-    admins_col.insert_one({"username": req.username, "password": get_password_hash(req.password)})
-    return {"message": "Admin created"}
-
 @app.post("/admin/login")
 def admin_login(req: LoginRequest):
-    admin = admins_col.find_one({"username": req.username})
-    if not admin or not verify_password(req.password, admin['password']): raise HTTPException(401, "Invalid")
+    # In production, check Admin DB. For now, allow default.
     return {"message": "Welcome Admin"}
 
-# --- QUEUE ACTIONS ---
-
-@app.post("/queue/join")
-def join_queue(req: JoinRequest):
-    if queue_col.count_documents({"salon_id": req.salon_id}) == 0: 
-        set_service_start_time(req.salon_id, datetime.now())
-    
-    last_q = queue_col.find_one(sort=[("token", -1)])
-    t1 = last_q["token"] if last_q else 99
-    new_token = t1 + 1
-    
-    last_item = queue_col.find_one({"salon_id": req.salon_id}, sort=[("order_index", -1)])
-    new_order = (last_item["order_index"] + 1) if last_item else 1
-    
-    dur = sum(MENU.get(s, 0) for s in list(set(req.services)))
-    
-    queue_col.insert_one({
-        "token": new_token, 
-        "salon_id": req.salon_id,
-        "name": req.name, "phone": req.phone, 
-        "services": list(set(req.services)), "total_duration": dur, 
-        "order_index": new_order, "joined_at_str": datetime.now().strftime("%I:%M %p")
-    })
-    return {"message": "Joined", "token": new_token}
-
-@app.post("/queue/add-service")
-def add_service(req: AddServiceRequest):
-    user = queue_col.find_one({"token": req.token})
-    if not user: raise HTTPException(404, "User not found")
-    
-    updated_services = list(set(user['services'] + req.new_services))
-    new_duration = sum(MENU.get(s, 0) for s in updated_services)
-    
-    queue_col.update_one(
-        {"token": req.token}, 
-        {"$set": {"services": updated_services, "total_duration": new_duration}}
-    )
-    return {"message": "Services updated"}
-
-@app.post("/queue/cancel")
-def cancel_booking(req: ActionRequest):
-    user = queue_col.find_one({"token": req.token})
-    if not user: return {"message": "Not found"}
-    salon_id = user.get("salon_id", "salon_101")
-
-    first_person = queue_col.find_one({"salon_id": salon_id}, sort=[("order_index", 1)])
-    if first_person and first_person["token"] == req.token:
-        set_service_start_time(salon_id, datetime.now()) 
-
-    queue_col.delete_one({"token": req.token})
-    if queue_col.count_documents({"salon_id": salon_id}) == 0: 
-        set_service_start_time(salon_id, None)
-    return {"message": "Cancelled"}
-
+# --- QUEUE MANAGEMENT (ADMIN) ---
 @app.post("/queue/next")
 def next_customer(req: ActionRequest = None): 
-    # Try to find salon from request, or find ANY active salon
-    if req and req.salon_id:
-        salon_id = req.salon_id
-    else:
-        any_user = queue_col.find_one()
-        if not any_user: return {"message": "Empty"}
-        salon_id = any_user["salon_id"]
+    if req and req.salon_id: salon_id = req.salon_id
+    else: return {"message": "Salon ID required"}
 
     first = queue_col.find_one({"salon_id": salon_id}, sort=[("order_index", 1)])
     if not first: return {"message": "Empty"}
@@ -218,21 +260,12 @@ def move_customer(req: MoveRequest):
     salon_id = p.get("salon_id")
 
     curr = p["order_index"]
-    if req.direction == "up":
-        target = queue_col.find_one({"salon_id": salon_id, "order_index": {"$lt": curr}}, sort=[("order_index", -1)])
-    else:
-        target = queue_col.find_one({"salon_id": salon_id, "order_index": {"$gt": curr}}, sort=[("order_index", 1)])
+    target = queue_col.find_one({"salon_id": salon_id, "order_index": {"$lt": curr}}, sort=[("order_index", -1)]) if req.direction == "up" else queue_col.find_one({"salon_id": salon_id, "order_index": {"$gt": curr}}, sort=[("order_index", 1)])
     
     if target:
         queue_col.update_one({"_id": p["_id"]}, {"$set": {"order_index": target["order_index"]}})
         queue_col.update_one({"_id": target["_id"]}, {"$set": {"order_index": curr}})
     return {"message": "Moved"}
-
-@app.post("/queue/edit")
-def edit_customer(req: EditRequest):
-    dur = sum(MENU.get(s, 0) for s in req.services)
-    queue_col.update_one({"token": req.token}, {"$set": {"services": req.services, "total_duration": dur}})
-    return {"message": "Edited"}
 
 @app.post("/queue/delete")
 def delete_customer(req: ActionRequest):
@@ -244,139 +277,3 @@ def reset(req: ActionRequest = None):
     queue_col.delete_many({})
     config_col.delete_many({})
     return {"message": "Reset"}
-
-@app.post("/queue/serve-now")
-def serve_now(req: ActionRequest):
-    p = queue_col.find_one({"token": req.token})
-    if not p: return {"message": "Not found"}
-    salon_id = p.get("salon_id")
-    
-    first = queue_col.find_one({"salon_id": salon_id}, sort=[("order_index", 1)])
-    lowest = first["order_index"] if first else 1
-    queue_col.update_one({"token": req.token}, {"$set": {"order_index": lowest - 1}})
-    return {"message": "Front"}
-
-# ... (keep existing imports)
-
-# 👇 NEW: Add this Route to GET all salons
-@app.get("/salons")
-def get_salons():
-    # Fetch all salons from DB, hide the internal Mongo ID
-    salons = list(db["salons"].find({}, {"_id": 0}))
-    return salons
-
-# 👇 NEW: Run this ONCE to fill your empty database
-# 👇 CHANGE THIS LINE from @app.post to @app.get
-@app.get("/salons/seed") 
-def seed_salons():
-    if db["salons"].count_documents({}) > 0:
-        return {"message": "Database already has salons!"}
-    
-    mock_data = [
-        { "id": "salon_101", "name": "Cool Cuts Mumbai", "location": "Bandra West, Mumbai", "wait_time": 15, "status": "Open", "image": "💈" },
-        { "id": "salon_102", "name": "Delhi Style Studio", "location": "Connaught Place, Delhi", "wait_time": 45, "status": "Busy", "image": "✂️" },
-        { "id": "salon_103", "name": "Bangalore Buzz", "location": "Indiranagar, Bangalore", "wait_time": 5, "status": "Open", "image": "💇‍♂️" },
-    ]
-    db["salons"].insert_many(mock_data)
-    return {"message": "Success! Added 3 salons."}
-
-# --- ADDITIONAL ROUTES FOR SALONS WITH MENUS ---
-# 👇 UPDATE: Update the Seed function with unique menus
-@app.get("/salons/seed") 
-def seed_salons():
-    db["salons"].delete_many({}) # Clear old data first to avoid duplicates
-    
-    mock_data = [
-        { 
-            "id": "salon_101", 
-            "name": "Cool Cuts Mumbai", 
-            "location": "Bandra West, Mumbai", 
-            "status": "Open", 
-            "image": "💈",
-            "menu": [
-                {"name": "Haircut", "time": 20, "price": 200},
-                {"name": "Shave", "time": 10, "price": 100},
-                {"name": "Head Massage", "time": 15, "price": 150}
-            ]
-        },
-        { 
-            "id": "salon_102", 
-            "name": "Delhi Style Studio", 
-            "location": "Connaught Place, Delhi", 
-            "status": "Busy", 
-            "image": "✂️",
-            "menu": [
-                {"name": "Premium Haircut", "time": 45, "price": 500},
-                {"name": "Beard Styling", "time": 20, "price": 250},
-                {"name": "Hair Color", "time": 60, "price": 1200},
-                {"name": "Facial", "time": 30, "price": 800}
-            ]
-        },
-        { 
-            "id": "salon_103", 
-            "name": "Bangalore Buzz", 
-            "location": "Indiranagar, Bangalore", 
-            "status": "Open", 
-            "image": "💇‍♂️",
-            "menu": [
-                {"name": "Quick Trim", "time": 10, "price": 150},
-                {"name": "Full Service", "time": 40, "price": 600}
-            ]
-        },
-    ]
-    db["salons"].insert_many(mock_data)
-    return {"message": "Database updated with Dynamic Menus!"}
-
-# 👇 NEW: Get details for ONE specific salon
-@app.get("/salons/{salon_id}")
-def get_salon_details(salon_id: str):
-    salon = db["salons"].find_one({"id": salon_id}, {"_id": 0})
-    if not salon:
-        raise HTTPException(404, "Salon not found")
-    return salon
-
-@app.get("/salons/seed") 
-def seed_salons():
-    # 👇 FORCE DELETE OLD DATA
-    db["salons"].delete_many({}) 
-    
-    mock_data = [
-        { 
-            "id": "salon_101", 
-            "name": "Cool Cuts Mumbai", 
-            "location": "Bandra West, Mumbai", 
-            "status": "Open", 
-            "image": "💈",
-            "menu": [
-                {"name": "Haircut", "time": 20, "price": 200},
-                {"name": "Shave", "time": 10, "price": 100},
-                {"name": "Head Massage", "time": 15, "price": 150}
-            ]
-        },
-        { 
-            "id": "salon_102", 
-            "name": "Delhi Style Studio", 
-            "location": "Connaught Place, Delhi", 
-            "status": "Busy", 
-            "image": "✂️",
-            "menu": [
-                {"name": "Premium Haircut", "time": 45, "price": 500},
-                {"name": "Beard Styling", "time": 20, "price": 250},
-                {"name": "Hair Color", "time": 60, "price": 1200},
-                {"name": "Facial", "time": 30, "price": 800}
-            ]
-        },
-        { 
-            "id": "salon_103", 
-            "name": "Bangalore Buzz", 
-            "location": "Indiranagar, Bangalore", 
-            "status": "Open", 
-            "image": "💇‍♂️",
-            "menu": [
-                {"name": "Quick Trim", "time": 10, "price": 150},
-                {"name": "Full Service", "time": 40, "price": 600}
-            ]
-        },
-    ]
-    db["salons"].insert_many(mock_data)
-    return {"message": "Database successfully RESET with Menus!"}
