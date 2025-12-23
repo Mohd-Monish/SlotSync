@@ -255,3 +255,27 @@ def serve_now(req: ActionRequest):
     lowest = first["order_index"] if first else 1
     queue_col.update_one({"token": req.token}, {"$set": {"order_index": lowest - 1}})
     return {"message": "Front"}
+
+# ... (keep existing imports)
+
+# 👇 NEW: Add this Route to GET all salons
+@app.get("/salons")
+def get_salons():
+    # Fetch all salons from DB, hide the internal Mongo ID
+    salons = list(db["salons"].find({}, {"_id": 0}))
+    return salons
+
+# 👇 NEW: Run this ONCE to fill your empty database
+@app.post("/salons/seed")
+def seed_salons():
+    if db["salons"].count_documents({}) > 0:
+        return {"message": "Database already has salons!"}
+    
+    # The initial data
+    mock_data = [
+        { "id": "salon_101", "name": "Cool Cuts Mumbai", "location": "Bandra West, Mumbai", "wait_time": 15, "status": "Open", "image": "💈" },
+        { "id": "salon_102", "name": "Delhi Style Studio", "location": "Connaught Place, Delhi", "wait_time": 45, "status": "Busy", "image": "✂️" },
+        { "id": "salon_103", "name": "Bangalore Buzz", "location": "Indiranagar, Bangalore", "wait_time": 5, "status": "Open", "image": "💇‍♂️" },
+    ]
+    db["salons"].insert_many(mock_data)
+    return {"message": "Success! Added 3 salons."}
